@@ -10,7 +10,7 @@
 <body>
   <header>
     <div class="brand"><p class="eyebrow">REHABILITATION DOCUMENT INTELLIGENCE</p><div class="brand-title"><h1>単体 AI OCR</h1><span id="aiIndicator" class="ai-indicator" role="status" aria-label="AI待機中" title="AI待機中">AI</span></div></div>
-    <div class="header-patient"><span>患者</span><select id="patientSelect" aria-label="患者"></select></div>
+    <input id="patientSelect" type="hidden" value="">
     <div id="health" class="health">接続確認中</div>
   </header>
   <main>
@@ -34,6 +34,6 @@
     <section id="view-audit" class="view"><div class="panel"><h2>監査ログ</h2><div id="auditList" class="tablewrap"></div></div></section>
   </main>
   <dialog id="detailDialog"><button id="closeDialog" class="close">閉じる</button><div id="detailContent"></div></dialog>
-  <script type="module" src="/app.js?v=20260725-patient-search-1"></script>
+  <script type="module" src="/app.js?v=20260725-patient-search-2"></script>
 </body>
 </html>
