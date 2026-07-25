@@ -65,6 +65,11 @@ if (sqlPool) {
 }
 db.patients.forEach(patient => { if (!patient.tenantId) patient.tenantId = facilityId; });
 db.jobs.forEach(job => { if (!job.tenantId) job.tenantId = facilityId; });
+const interruptedJobs = db.jobs.filter(job => ['REQUEST', 'PROCESSING'].includes(job.status));
+if (interruptedJobs.length) {
+  interruptedJobs.forEach(job => { job.status = 'ERROR'; job.error = 'サーバー再起動でOCRが中断されました。再OCRを実行してください。'; job.updatedAt = new Date().toISOString(); });
+  await persist();
+}
 
 function now() { return new Date().toISOString(); }
 function id(prefix) { return `${prefix}_${crypto.randomUUID()}`; }
@@ -452,7 +457,7 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, { 'Content-Type': job.imageType, 'Content-Length': imageBytes.length, 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' }); return res.end(imageBytes);
     }
     const retryMatch = /^\/api\/jobs\/([^/]+)\/retry$/.exec(url.pathname);
-    if (req.method === 'POST' && retryMatch) { const job = db.jobs.find(j => j.tenantId === identity.tenantId && j.id === retryMatch[1]); if (!job) return sendJson(res, 404, { error: 'OCR履歴が見つかりません' }); if (!['ERROR', 'OCR_DONE'].includes(job.status)) return sendJson(res, 409, { error: '現在の状態では再実行できません' }); job.status = 'REQUEST'; job.result = null; job.error = null; job.updatedAt = now(); audit('JOB_RETRIED', 'job', job.id); await persist(); setImmediate(() => runOcr(job.id)); return sendJson(res, 202, jobView(job)); }
+    if (req.method === 'POST' && retryMatch) { const job = db.jobs.find(j => j.tenantId === identity.tenantId && j.id === retryMatch[1]); if (!job) return sendJson(res, 404, { error: 'OCR履歴が見つかりません' }); if (!['ERROR', 'OCR_DONE'].includes(job.status)) return sendJson(res, 409, { error: '現在の状態では再実行できません' }); job.status = 'REQUEST'; job.error = null; job.updatedAt = now(); audit('JOB_RETRIED', 'job', job.id); await persist(); setImmediate(() => runOcr(job.id)); return sendJson(res, 202, jobView(job)); }
     const confirmMatch = /^\/api\/jobs\/([^/]+)\/confirm$/.exec(url.pathname);
     if (req.method === 'PUT' && confirmMatch) {
       const job = db.jobs.find(j => j.tenantId === identity.tenantId && j.id === confirmMatch[1]); if (!job) return sendJson(res, 404, { error: 'OCR履歴が見つかりません' }); if (job.status !== 'OCR_DONE' && job.status !== 'DONE') return sendJson(res, 409, { error: 'OCR完了後に確定してください' });
