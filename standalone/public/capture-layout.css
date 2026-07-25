@@ -196,3 +196,6 @@ header nav button.active {
     grid-template-columns: 1fr;
   }
 }
+
+/* rehaInfo brand palette */
+.ai-indicator{border-color:#d4daed;background:#364b8d;color:#fff}.ai-indicator.active{border-color:#fff;background:#c22828;color:#fff}.ocr-progress{background:#dddfde}.ocr-progress span{background:#1b294e}.ocr-progress.error span{background:#c22828}.supported-sheets{color:#485371}.text-result-pane{border-left-color:#ced4da}.text-result-pane .jobhead{background:#fff}.text-sheet{background:#e6eaf4}.sheet-field .field-value{border-color:#1b294e;background:#fff8e8;color:#333}.sheet-field .field-value:focus{outline-color:#4b77d4}.ocr-value{background:#1b294ee8;border-color:#fff}.item-number-display strong{color:#1b294e}
