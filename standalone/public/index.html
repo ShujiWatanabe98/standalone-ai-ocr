@@ -4,13 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>単体 AI OCR</title>
-  <link rel="stylesheet" href="/styles.css?v=20260725-rehainfo-1">
-  <link rel="stylesheet" href="/capture-layout.css?v=20260725-rehainfo-1">
+  <link rel="stylesheet" href="/styles.css?v=20260725-onepage-1">
+  <link rel="stylesheet" href="/capture-layout.css?v=20260725-onepage-1">
 </head>
 <body>
   <header>
     <div class="brand"><p class="eyebrow">REHABILITATION DOCUMENT INTELLIGENCE</p><div class="brand-title"><h1>単体 AI OCR</h1><span id="aiIndicator" class="ai-indicator" role="status" aria-label="AI待機中" title="AI待機中">AI</span></div></div>
-    <nav><button data-view="capture" class="active">撮影・OCR</button><button data-view="history">履歴・回覧</button><button data-view="patients">患者管理</button><button data-view="audit">監査ログ</button></nav>
     <div class="header-patient"><span>患者</span><select id="patientSelect" aria-label="患者"></select></div>
     <div id="health" class="health">接続確認中</div>
   </header>
@@ -30,11 +29,11 @@
         <p id="captureMessage" class="message capture-message"></p>
       </div>
     </section>
-    <section id="view-history" class="view"><div class="panel"><div class="jobhead"><h2>OCR履歴・回覧</h2><button id="refreshHistory">更新</button></div><div id="historyList" class="cards"></div></div></section>
-    <section id="view-patients" class="view"><div class="panel narrow"><h2>患者登録</h2><form id="patientForm"><label>施設内患者ID<input name="facilityPatientId" required></label><label>患者名<input name="name" required></label><label>生年月日<input name="birthDate" type="date"></label><button class="primary">登録</button></form><h2>登録患者</h2><div id="patientList"></div></div></section>
+    <section id="view-history" class="view"><div class="panel"><div class="jobhead"><h2>履歴・回覧</h2><button id="refreshHistory">更新</button></div><div id="historyList" class="cards"></div></div></section>
+    <section id="view-patients" class="view"><div class="panel"><h2>患者管理</h2><div class="grid2"><div><h3>患者登録</h3><form id="patientForm"><label>施設内患者ID<input name="facilityPatientId" required></label><label>患者名<input name="name" required></label><label>生年月日<input name="birthDate" type="date"></label><button class="primary">登録</button></form></div><div><h3>登録患者</h3><div id="patientList"></div></div></div></div></section>
     <section id="view-audit" class="view"><div class="panel"><h2>監査ログ</h2><div id="auditList" class="tablewrap"></div></div></section>
   </main>
   <dialog id="detailDialog"><button id="closeDialog" class="close">閉じる</button><div id="detailContent"></div></dialog>
-  <script type="module" src="/app.js?v=20260725-21"></script>
+  <script type="module" src="/app.js?v=20260725-onepage-1"></script>
 </body>
 </html>
