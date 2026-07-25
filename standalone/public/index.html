@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>単体 AI OCR</title>
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/capture-layout.css?v=20260725-19">
+</head>
+<body>
+  <header>
+    <div class="brand"><p class="eyebrow">REHABILITATION DOCUMENT INTELLIGENCE</p><div class="brand-title"><h1>単体 AI OCR</h1><span id="aiIndicator" class="ai-indicator" role="status" aria-label="AI待機中" title="AI待機中">AI</span></div></div>
+    <nav><button data-view="capture" class="active">撮影・OCR</button><button data-view="history">履歴・回覧</button><button data-view="patients">患者管理</button><button data-view="audit">監査ログ</button></nav>
+    <div class="header-patient"><span>患者</span><select id="patientSelect" aria-label="患者"></select></div>
+    <div id="health" class="health">接続確認中</div>
+  </header>
+  <main>
+    <section id="view-capture" class="view active">
+      <div class="panel capture-panel">
+        <div class="capture-controls">
+          <div class="photo-control"><label class="drop">カメラ撮影または画像選択（最大10ファイル）<input id="imageInput" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" multiple></label></div>
+          <div class="start-control"><button id="correctionButton" class="secondary image-correct-button" disabled>画像補正</button><button id="startButton" class="primary capture-start compact-ocr-button" disabled>AI OCRを開始</button><div id="ocrProgress" class="ocr-progress" role="progressbar" aria-label="OCR処理進捗" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="ocrProgressBar"></span></div><small id="ocrProgressText">待機中</small><span class="supported-sheets">OCR可能シート：FMA、BBS、コース、STEF、SLTA、BIT</span></div>
+        </div>
+        <p class="message">評価シート名は画像からAI OCRが自動判定します。</p>
+        <div class="ocr-comparison">
+          <figure><figcaption>読み込んだファイル</figcaption><div class="preview"><img id="previewImage" alt="選択画像のプレビュー"><p id="previewEmpty">画像を選択してください</p></div></figure>
+          <figure><figcaption>OCR結果</figcaption><div class="preview result-preview"><img id="resultImage" alt="OCR結果画像"><div id="ocrOverlay" class="ocr-overlay"></div><p id="resultEmpty"></p></div></figure>
+          <section id="currentJob" class="text-result-pane hidden"><div class="jobhead"><h2>OCR結果（テキストで確認）</h2><div class="jobhead-actions"><span id="jobStatus" class="badge"></span><button id="retryButton" class="secondary hidden">再実行</button><button id="confirmButton" class="primary hidden">修正結果を確定</button></div></div><p id="jobError" class="error"></p><div id="resultEditor"></div></section>
+        </div>
+        <p id="captureMessage" class="message capture-message"></p>
+      </div>
+    </section>
+    <section id="view-history" class="view"><div class="panel"><div class="jobhead"><h2>OCR履歴・回覧</h2><button id="refreshHistory">更新</button></div><div id="historyList" class="cards"></div></div></section>
+    <section id="view-patients" class="view"><div class="panel narrow"><h2>患者登録</h2><form id="patientForm"><label>施設内患者ID<input name="facilityPatientId" required></label><label>患者名<input name="name" required></label><label>生年月日<input name="birthDate" type="date"></label><button class="primary">登録</button></form><h2>登録患者</h2><div id="patientList"></div></div></section>
+    <section id="view-audit" class="view"><div class="panel"><h2>監査ログ</h2><div id="auditList" class="tablewrap"></div></div></section>
+  </main>
+  <dialog id="detailDialog"><button id="closeDialog" class="close">閉じる</button><div id="detailContent"></div></dialog>
+  <script type="module" src="/app.js?v=20260725-21"></script>
+</body>
+</html>

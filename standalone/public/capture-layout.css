@@ -1,0 +1,198 @@
+.brand {
+  flex: 0 0 auto;
+}
+
+.brand-title{display:flex;align-items:center;gap:9px}.ai-indicator{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border:2px solid #9ec4c9;border-radius:50%;background:#234e5c;color:#d8ecee;font-size:11px;font-weight:900;box-shadow:0 0 0 3px #ffffff16}.ai-indicator.active{border-color:#fff;background:#e12222;color:#fff;animation:ai-pulse .8s ease-in-out infinite}@keyframes ai-pulse{0%,100%{opacity:1;box-shadow:0 0 0 2px #ff626255}50%{opacity:.35;box-shadow:0 0 0 8px #ff303011}}
+
+header nav {
+  display: flex;
+  flex: 1 1 auto;
+  gap: 8px;
+  margin: 0 12px;
+  overflow-x: auto;
+}
+
+header nav button {
+  flex: 0 0 auto;
+}
+
+header nav button[data-view="patients"] {
+  width: 96px;
+  height: 38px;
+}
+
+header nav button.active {
+  background: var(--teal);
+  border-color: #62bbb5;
+  color: #fff;
+}
+
+.header-patient {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.header-patient select {
+  width: 170px;
+  margin: 0;
+  padding: 8px;
+}
+
+.capture-controls {
+  display: grid;
+  grid-template-columns: max-content max-content;
+  justify-content: start;
+  gap: 18px;
+  align-items: end;
+}
+
+#view-capture > .capture-panel {
+  width: calc(100vw - 32px);
+  max-width: none;
+  margin-left: calc(50% - 50vw + 16px);
+  margin-right: calc(50% - 50vw + 16px);
+}
+
+.capture-controls h2 {
+  margin: 0 0 7px;
+}
+
+.patient-compact select {
+  margin: 0;
+}
+
+.photo-control .drop {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  margin: 0;
+  min-height: 42px;
+  padding: 0;
+  width: max-content;
+  font-size: 11px;
+}
+
+.photo-control input {
+  display: block;
+  width: 210px;
+  margin-top: 2px;
+  padding: 2px;
+  font-size: 11px;
+}
+
+.capture-start {
+  align-self: end;
+  min-height: 0;
+  padding: 4px 6px;
+  font-size: 10px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.start-control{align-self:end;justify-self:start;display:grid;grid-template-columns:96px 96px 420px max-content;grid-template-rows:1fr 1fr;column-gap:8px;width:max-content;min-width:0}.image-correct-button{grid-column:1;grid-row:1/3;width:96px;height:38px;padding:10px 8px}.start-control .compact-ocr-button{grid-column:2;grid-row:1/3;width:96px!important;min-width:96px!important;max-width:96px!important;height:38px!important;padding:10px 8px!important;font-size:13px!important;line-height:1!important}.ocr-progress{grid-column:3;align-self:end;height:6px;overflow:hidden;border-radius:999px;background:#d9e3e6}.ocr-progress span{display:block;width:0;height:100%;border-radius:inherit;background:var(--teal);transition:width .35s ease}.ocr-progress.error span{background:#b42828}.start-control small{grid-column:3;align-self:start;font-size:9px;color:#5f737c;text-align:left}.supported-sheets{grid-column:4;grid-row:1/3;align-self:center;font-size:12px;font-weight:700;color:#40545d;white-space:nowrap}
+
+.capture-panel > .message {
+  margin: 10px 0;
+}
+
+.capture-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 12px;
+}
+
+.capture-actions .message {
+  margin: 0;
+}
+
+.capture-message {
+  margin: 10px 0 0;
+}
+
+.jobhead-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px}.jobhead h2{margin-bottom:4px}
+.text-result-pane .confidence{display:none}
+
+.result-meta{display:grid;grid-template-columns:2fr 1fr;gap:12px}.text-sheet{position:relative;width:min(100%,1000px);margin:12px auto;background:#e8edef;overflow:hidden}.text-sheet>img{display:block;width:100%;height:auto}.sheet-field{position:absolute!important;display:block!important;width:46px!important;padding:0!important;border:0!important;transform:translate(-50%,-50%);z-index:3}.sheet-field .field-value{width:46px;margin:0;padding:4px 2px;border:2px solid #087f78;background:#fffde8;color:#17212b;text-align:center;font-size:14px;font-weight:900;box-shadow:0 1px 4px #0005}.sheet-field .field-value:focus{outline:3px solid #ffb000;z-index:4}.sheet-fallback{margin-top:12px}
+.result-fields.two-columns{display:grid;grid-template-columns:1fr 1fr;gap:24px}.result-column{min-width:0}
+.item-number-display{display:flex;align-items:center;justify-content:center;min-height:38px}.item-number-display strong{font-size:16px;color:#29434e}.numeric-value{max-width:110px;text-align:center;font-size:16px;font-weight:800}.text-value{width:100%;min-width:160px;resize:vertical}
+#resultEditor .fieldrow>label{display:flex;align-items:center;gap:8px;margin:0;white-space:nowrap}#resultEditor .fieldrow>label .field-value{margin-top:0}
+
+.ocr-comparison{display:grid;grid-template-columns:1fr 1fr 1.2fr;gap:16px;align-items:start}.ocr-comparison figure{min-width:0;margin:0}.ocr-comparison figcaption{margin:0 0 6px;font-size:13px;font-weight:700}.text-result-pane{min-width:0;max-height:620px;overflow:auto;border-left:1px solid var(--line);padding-left:16px}.text-result-pane .jobhead{position:sticky;top:0;z-index:5;background:#fff;padding-bottom:6px}.result-preview{position:relative}.ocr-overlay{position:absolute;inset:0;pointer-events:none}.ocr-value{position:absolute;z-index:2;transform:translate(-50%,-50%);border:2px solid #fff;border-radius:5px;background:#087f78e8;box-shadow:0 1px 5px #0008;color:#fff;padding:2px 5px;font-size:13px;font-weight:800}
+.ocr-comparison:has(.text-result-pane.hidden){grid-template-columns:1fr 1fr}
+.ocr-comparison figure .preview{min-height:432px}.ocr-comparison figure .preview img{max-height:624px}
+.result-preview .ocr-value { transform: translate(0, -50%); }
+.result-preview .ocr-value.overlay-left{transform:translate(-100%,-50%)}.result-preview .ocr-value.overlay-right{transform:translate(0,-50%)}
+
+@media (max-width: 760px) {
+  #view-capture > .capture-panel {
+    width: calc(100vw - 16px);
+    margin-left: calc(50% - 50vw + 8px);
+    margin-right: calc(50% - 50vw + 8px);
+  }
+
+  header {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  header nav {
+    order: 3;
+    flex-basis: 100%;
+    margin: 0;
+  }
+
+  .header-patient {
+    order: 2;
+    margin-left: auto;
+  }
+
+  .header-patient select {
+    width: 145px;
+  }
+
+  .capture-controls {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .start-control {
+    grid-template-columns: 96px 96px minmax(120px, 1fr);
+    width: 100%;
+  }
+
+  .supported-sheets {
+    grid-column: 1/4;
+    grid-row: 3;
+    white-space: normal;
+  }
+
+  .photo-control .drop {
+    padding: 0;
+  }
+
+  .photo-control input {
+    width: 160px;
+  }
+
+  .capture-start {
+    padding: 4px 6px;
+  }
+
+  .ocr-comparison {
+    grid-template-columns: 1fr;
+  }
+
+  .ocr-comparison figure .preview {
+    min-height: 312px;
+  }
+
+  .result-fields.two-columns {
+    grid-template-columns: 1fr;
+  }
+}

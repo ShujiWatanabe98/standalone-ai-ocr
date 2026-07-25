@@ -1,0 +1,2 @@
+const form=document.querySelector('#loginForm');const error=document.querySelector('#loginError');
+form.onsubmit=async event=>{event.preventDefault();error.textContent='';const body=Object.fromEntries(new FormData(form));const response=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const data=await response.json();if(response.ok)location.href='/';else error.textContent=data.error||'ログインに失敗しました'};

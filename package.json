@@ -1,0 +1,14 @@
+{
+  "name": "standalone-ai-ocr",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node standalone/server.mjs",
+    "check": "node --check standalone/server.mjs && node --check standalone/rehainfo-ocr-definitions.mjs && node --check standalone/public/app.js",
+    "test": "node standalone/test/smoke.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
