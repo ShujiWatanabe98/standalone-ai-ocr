@@ -85,6 +85,8 @@ header nav button.active {
   font-size: 11px;
 }
 
+.photo-control-title{display:block;margin-bottom:7px;font-size:11px;font-weight:700;color:#333}.photo-control .image-select-button{display:flex;align-items:center;justify-content:center;width:96px;height:38px;margin:0;padding:10px 8px;border:1px solid var(--reha-main);border-radius:8px;background:#fff;color:var(--reha-main);font-size:13px;font-weight:700;line-height:1;cursor:pointer;transition:background-color .15s,color .15s,transform .08s}.photo-control .image-select-button:hover{background:var(--reha-main);color:#fff}.photo-control .image-select-button:active{background:var(--reha-main-deep);border-color:var(--reha-main-deep);transform:scale(.97)}.photo-control .image-select-button input{display:none!important}
+
 .capture-start {
   align-self: end;
   min-height: 0;
