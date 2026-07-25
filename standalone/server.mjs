@@ -4,6 +4,7 @@ import { existsSync, createReadStream } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
+import pg from 'pg';
 import { buildBbsRetryPrompt, buildRehainfoOcrPrompt, normalizeRehainfoResult } from './rehainfo-ocr-definitions.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -27,6 +28,8 @@ const maxBodyBytes = 16 * 1024 * 1024;
 const imageRetentionDays = Math.max(0, Number(process.env.AIOCR_IMAGE_RETENTION_DAYS || 0));
 const secureCookies = process.env.NODE_ENV === 'production';
 const allowedImageTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
+const databaseUrl = process.env.DATABASE_URL || '';
+const sqlPool = databaseUrl ? new pg.Pool({ connectionString: databaseUrl }) : null;
 
 let db = { version: 1, patients: [], jobs: [], audit: [] };
 let writeChain = Promise.resolve();
@@ -38,7 +41,21 @@ if (encryptionSecret && encryptionSecret.length < 32) throw new Error('AIOCR_ENC
 
 await mkdir(imageDir, { recursive: true });
 await mkdir(backupDir, { recursive: true });
-if (existsSync(dbFile)) {
+if (sqlPool) {
+  await sqlPool.query('CREATE TABLE IF NOT EXISTS aiocr_state (id TEXT PRIMARY KEY, payload BYTEA NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())');
+  await sqlPool.query('CREATE TABLE IF NOT EXISTS aiocr_images (name TEXT PRIMARY KEY, payload BYTEA NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())');
+  const stored = await sqlPool.query("SELECT payload FROM aiocr_state WHERE id = 'main'");
+  if (stored.rowCount) {
+    const parsed = JSON.parse(decryptBytes(stored.rows[0].payload).toString('utf8'));
+    db = { ...db, ...parsed };
+  } else if (existsSync(dbFile)) {
+    const parsed = JSON.parse(decryptBytes(await readFile(dbFile)).toString('utf8'));
+    db = { ...db, ...parsed };
+    await persist();
+  } else {
+    await persist();
+  }
+} else if (existsSync(dbFile)) {
   const parsed = JSON.parse(decryptBytes(await readFile(dbFile)).toString('utf8'));
   db = { ...db, ...parsed };
   db.patients.forEach(patient => { if (!patient.tenantId) patient.tenantId = facilityId; });
@@ -46,6 +63,8 @@ if (existsSync(dbFile)) {
 } else {
   await persist();
 }
+db.patients.forEach(patient => { if (!patient.tenantId) patient.tenantId = facilityId; });
+db.jobs.forEach(job => { if (!job.tenantId) job.tenantId = facilityId; });
 
 function now() { return new Date().toISOString(); }
 function id(prefix) { return `${prefix}_${crypto.randomUUID()}`; }
@@ -80,19 +99,48 @@ function decryptBytes(content) {
 }
 function persist() {
   writeChain = writeChain.then(async () => {
+    const payload = encryptBytes(Buffer.from(JSON.stringify(db, null, 2), 'utf8'));
+    if (sqlPool) {
+      await sqlPool.query("INSERT INTO aiocr_state (id, payload, updated_at) VALUES ('main', $1, NOW()) ON CONFLICT (id) DO UPDATE SET payload = EXCLUDED.payload, updated_at = NOW()", [payload]);
+      return;
+    }
     const temp = `${dbFile}.tmp`;
-    await writeFile(temp, encryptBytes(Buffer.from(JSON.stringify(db, null, 2), 'utf8')));
+    await writeFile(temp, payload);
     await rename(temp, dbFile);
   });
   return writeChain;
+}
+async function writeImage(name, content) {
+  const payload = encryptBytes(content);
+  if (sqlPool) return sqlPool.query('INSERT INTO aiocr_images (name, payload, updated_at) VALUES ($1, $2, NOW()) ON CONFLICT (name) DO UPDATE SET payload = EXCLUDED.payload, updated_at = NOW()', [name, payload]);
+  return writeFile(path.join(imageDir, name), payload);
+}
+async function readImage(name) {
+  if (sqlPool) {
+    const stored = await sqlPool.query('SELECT payload FROM aiocr_images WHERE name = $1', [name]);
+    if (!stored.rowCount) return null;
+    return decryptBytes(stored.rows[0].payload);
+  }
+  const target = path.join(imageDir, name);
+  return existsSync(target) ? decryptBytes(await readFile(target)) : null;
+}
+async function deleteImage(name) {
+  if (sqlPool) return sqlPool.query('DELETE FROM aiocr_images WHERE name = $1', [name]);
+  const target = path.join(imageDir, name);
+  if (existsSync(target)) await unlink(target);
 }
 async function createBackup() {
   await persist();
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const destination = path.join(backupDir, `backup-${stamp}`);
   await mkdir(destination, { recursive: true });
-  await cp(dbFile, path.join(destination, 'database.json'));
-  if (existsSync(imageDir)) await cp(imageDir, path.join(destination, 'images'), { recursive: true });
+  await writeFile(path.join(destination, 'database.json'), encryptBytes(Buffer.from(JSON.stringify(db, null, 2), 'utf8')));
+  if (sqlPool) {
+    const images = await sqlPool.query('SELECT name, payload FROM aiocr_images');
+    const destinationImages = path.join(destination, 'images');
+    await mkdir(destinationImages, { recursive: true });
+    await Promise.all(images.rows.map(image => writeFile(path.join(destinationImages, image.name), image.payload)));
+  } else if (existsSync(imageDir)) await cp(imageDir, path.join(destination, 'images'), { recursive: true });
   await writeFile(path.join(destination, 'manifest.json'), JSON.stringify({ version: 1, createdAt: now(), encrypted: Boolean(encryptionKey), facilityId }, null, 2), 'utf8');
   return destination;
 }
@@ -102,8 +150,7 @@ async function enforceImageRetention() {
   const threshold = Date.now() - imageRetentionDays * 86400000;
   for (const job of db.jobs) {
     if (job.imageDeletedAt || job.status !== 'DONE' || !job.confirmedAt || Date.parse(job.confirmedAt) > threshold) continue;
-    const target = path.join(imageDir, job.imageFile);
-    if (existsSync(target)) await unlink(target);
+    await deleteImage(job.imageFile);
     job.imageDeletedAt = now();
     audit('IMAGE_RETENTION_DELETED', 'job', job.id, { tenantId: job.tenantId, retentionDays: imageRetentionDays });
   }
@@ -283,7 +330,8 @@ async function runOcr(jobId) {
   try {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) throw new Error('OPENAI_API_KEYが設定されていません');
-    const bytes = decryptBytes(await readFile(path.join(imageDir, job.imageFile)));
+    const bytes = await readImage(job.imageFile);
+    if (!bytes) throw new Error('OCR画像が見つかりません');
     const imageUrl = `data:${job.imageType};base64,${bytes.toString('base64')}`;
     const attempts = [];
     let ocr = await requestOcr(apiKey, imageUrl, buildRehainfoOcrPrompt());
@@ -372,7 +420,7 @@ const server = http.createServer(async (req, res) => {
       const body = await readJson(req); const patient = db.patients.find(p => p.tenantId === identity.tenantId && p.id === body.patientId);
       if (!patient) return sendJson(res, 400, { error: '患者を選択してください' });
       const image = parseDataUrl(body.imageDataUrl); const jobId = id('ocr'); const ext = image.mime === 'image/png' ? '.png' : image.mime === 'image/webp' ? '.webp' : '.jpg';
-      const imageFile = `${jobId}${ext}`; await writeFile(path.join(imageDir, imageFile), encryptBytes(image.bytes));
+      const imageFile = `${jobId}${ext}`; await writeImage(imageFile, image.bytes);
       const job = { id: jobId, tenantId: identity.tenantId, patientId: patient.id, evaluationType: '帳票判定中', status: 'REQUEST', imageFile, imageType: image.mime, result: null, confirmedResult: null, error: null, createdAt: now(), updatedAt: now(), confirmedAt: null };
       db.jobs.push(job); audit('JOB_CREATED', 'job', job.id, { patientId: patient.id }); await persist(); setImmediate(() => runOcr(job.id)); return sendJson(res, 202, jobView(job));
     }
@@ -381,8 +429,7 @@ const server = http.createServer(async (req, res) => {
     const imageMatch = /^\/api\/jobs\/([^/]+)\/image$/.exec(url.pathname);
     if (req.method === 'GET' && imageMatch) {
       const job = db.jobs.find(j => j.tenantId === identity.tenantId && j.id === imageMatch[1]); if (!job) return sendJson(res, 404, { error: '画像が見つかりません' });
-      const target = path.join(imageDir, job.imageFile); if (!existsSync(target)) return sendJson(res, 404, { error: '画像が見つかりません' });
-      const imageBytes = decryptBytes(await readFile(target));
+      const imageBytes = await readImage(job.imageFile); if (!imageBytes) return sendJson(res, 404, { error: '画像が見つかりません' });
       res.writeHead(200, { 'Content-Type': job.imageType, 'Content-Length': imageBytes.length, 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' }); return res.end(imageBytes);
     }
     const retryMatch = /^\/api\/jobs\/([^/]+)\/retry$/.exec(url.pathname);

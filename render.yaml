@@ -29,3 +29,11 @@ services:
         value: /tmp/standalone-ai-ocr/backups
       - key: AIOCR_IMAGE_RETENTION_DAYS
         value: "1"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: standalone-ai-ocr-db
+          property: connectionString
+
+databases:
+  - name: standalone-ai-ocr-db
+    plan: free
