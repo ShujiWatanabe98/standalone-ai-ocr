@@ -17,7 +17,7 @@
     <section id="view-capture" class="view active">
       <div class="panel capture-panel">
         <div class="capture-controls">
-          <div class="photo-control"><span class="photo-control-title">カメラ撮影または画像選択（最大10ファイル）</span><label class="secondary image-select-button">ファイルの選択<input id="imageInput" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" multiple></label></div>
+          <div class="photo-control"><span class="photo-control-title">カメラ撮影または画像選択（最大10ファイル）</span><label class="secondary image-select-button">ファイル選択<input id="imageInput" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" multiple></label></div>
           <div class="start-control"><button id="correctionButton" class="secondary image-correct-button" disabled>画像補正</button><button id="startButton" class="primary capture-start compact-ocr-button" disabled>AI OCRを開始</button><div id="ocrProgress" class="ocr-progress" role="progressbar" aria-label="OCR処理進捗" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="ocrProgressBar"></span></div><small id="ocrProgressText">待機中</small><span class="supported-sheets">OCR可能シート：FMA、BBS、コース、STEF、SLTA、BIT</span></div>
         </div>
         <p class="message">評価シート名は画像からAI OCRが自動判定します。</p>
