@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>単体 AI OCR</title>
   <link rel="stylesheet" href="/styles.css?v=20260725-onepage-1">
-  <link rel="stylesheet" href="/capture-layout.css?v=20260725-filebutton-1">
+  <link rel="stylesheet" href="/capture-layout.css?v=20260725-patient-search-1">
 </head>
 <body>
   <header>
@@ -17,7 +17,7 @@
     <section id="view-capture" class="view active">
       <div class="panel capture-panel">
         <div class="capture-controls">
-          <div class="photo-control"><span class="photo-control-title">カメラ撮影または画像選択（最大10ファイル）</span><label class="secondary image-select-button">ファイル選択<input id="imageInput" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" multiple></label></div>
+          <div class="photo-control"><span class="photo-control-title">カメラ撮影または画像選択（最大10ファイル）</span><div class="photo-input-row"><label class="secondary image-select-button">ファイル選択<input id="imageInput" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" multiple></label><input id="patientSearch" class="patient-search-input" type="search" list="patientSearchList" placeholder="患者を探す" aria-label="患者を探す" autocomplete="off"><datalist id="patientSearchList"></datalist></div></div>
           <div class="start-control"><button id="correctionButton" class="secondary image-correct-button" disabled>画像補正</button><button id="startButton" class="primary capture-start compact-ocr-button" disabled>AI OCRを開始</button><div id="ocrProgress" class="ocr-progress" role="progressbar" aria-label="OCR処理進捗" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="ocrProgressBar"></span></div><small id="ocrProgressText">待機中</small><span class="supported-sheets">OCR可能シート：FMA、BBS、コース、STEF、SLTA、BIT</span></div>
         </div>
         <p class="message">評価シート名は画像からAI OCRが自動判定します。</p>
@@ -34,6 +34,6 @@
     <section id="view-audit" class="view"><div class="panel"><h2>監査ログ</h2><div id="auditList" class="tablewrap"></div></div></section>
   </main>
   <dialog id="detailDialog"><button id="closeDialog" class="close">閉じる</button><div id="detailContent"></div></dialog>
-  <script type="module" src="/app.js?v=20260725-onepage-1"></script>
+  <script type="module" src="/app.js?v=20260725-patient-search-1"></script>
 </body>
 </html>
