@@ -61,6 +61,22 @@ export function buildBbsRetryPrompt() {
 {"testType":"BBS","documentType":"Berg Balance Scale（BBS）","evaluationDate":"","fields":[{"id":"#0","label":"結果 #0","value":"0","confidence":0.0,"x":0.0,"y":0.0}],"notes":""}`;
 }
 
+export function buildStefRetryPrompt() {
+  const fields = Array.from({ length: 20 }, (_, index) => ({
+    id: `time_${index}`,
+    label: `検査${Math.floor(index / 2) + 1} ${index % 2 === 0 ? '右' : '左'}　所要時間`,
+    value: '',
+    confidence: 0,
+    x: 0,
+    y: 0,
+  }));
+  return `この画像はSTEF（簡易上肢機能検査）の記録用紙です。左側の大きな主表だけを対象にし、検査1〜10の各行にある右・左の手書き「所要時間」数値を読み取ってください。
+右側にある得点換算表、基準値、印刷済みの数字、時間外個数、得点は読み取らないでください。所要時間欄の手書き小数（例: 6.54、12.57）を小数点を含めて転記します。
+idは検査1右=time_0、検査1左=time_1、検査2右=time_2、検査2左=time_3、以後同じ順で検査10左=time_19です。20項目を必ずこの順番・このidで返し、手書き数字が見える欄を空文字にしないでください。推測できない欄だけ空文字にします。
+各値のセル中央位置を画像左上0・右下100のx、yで返してください。JSON以外は返しません。
+${JSON.stringify({ testType: 'STEF', documentType: 'STEF（簡易上肢機能検査）', evaluationDate: '', fields, notes: '' })}`;
+}
+
 function position(value) {
   if (value === null || value === undefined || value === '') return null;
   const number = Number(value);

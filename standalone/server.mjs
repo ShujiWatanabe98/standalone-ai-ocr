@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
 import pg from 'pg';
-import { buildBbsRetryPrompt, buildRehainfoOcrPrompt, normalizeRehainfoResult } from './rehainfo-ocr-definitions.mjs';
+import { buildBbsRetryPrompt, buildRehainfoOcrPrompt, buildStefRetryPrompt, normalizeRehainfoResult } from './rehainfo-ocr-definitions.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(here, 'public');
@@ -322,6 +322,10 @@ function filledFieldCount(result) {
   return (result?.fields || []).filter(field => String(field.value ?? '').trim() !== '').length;
 }
 
+function filledStefTimeCount(result) {
+  return (result?.fields || []).filter(field => /^time_\d+$/.test(field.id) && String(field.value ?? '').trim() !== '').length;
+}
+
 async function runOcr(jobId) {
   const job = db.jobs.find(item => item.id === jobId);
   if (!job) return;
@@ -341,12 +345,27 @@ async function runOcr(jobId) {
       ocr = await requestOcr(apiKey, imageUrl, buildBbsRetryPrompt());
       attempts.push({ responseId: ocr.responseId, filledFieldCount: filledFieldCount(ocr.result), output: ocr.outputText });
     }
+    if (ocr.result.testType === 'STEF' && filledStefTimeCount(ocr.result) === 0) {
+      audit('OCR_RETRY_EMPTY_STEF_TIME', 'job', job.id, { attempt: attempts.length + 1 }); await persist();
+      const stefRetry = await requestOcr(apiKey, imageUrl, buildStefRetryPrompt());
+      attempts.push({ responseId: stefRetry.responseId, filledFieldCount: filledFieldCount(stefRetry.result), output: stefRetry.outputText });
+      const retryFields = new Map(stefRetry.result.fields.map(field => [field.id, field]));
+      ocr = {
+        ...stefRetry,
+        result: {
+          ...ocr.result,
+          fields: ocr.result.fields.map(field => /^time_\d+$/.test(field.id) && retryFields.has(field.id) ? retryFields.get(field.id) : field),
+          notes: [ocr.result.notes, stefRetry.result.notes].filter(Boolean).join(' / '),
+        },
+      };
+    }
     job.result = ocr.result;
     job.evaluationType = job.result.documentType || '帳票名不明';
     job.rawResponseId = ocr.responseId;
     job.ocrAttempts = attempts;
     const filledCount = filledFieldCount(job.result);
     if (job.result.testType === 'BBS' && filledCount === 0) throw new Error('BBSの点数を読み取れませんでした。画像を確認して再実行してください。');
+    if (job.result.testType === 'STEF' && filledStefTimeCount(job.result) === 0) throw new Error('STEFの所要時間を読み取れませんでした。画像を確認して再実行してください。');
     job.status = 'OCR_DONE'; job.updatedAt = now();
     audit('OCR_COMPLETED', 'job', job.id, { fieldCount: job.result.fields.length, filledFieldCount: filledCount, attempts: attempts.length, responseId: job.rawResponseId });
   } catch (error) {
