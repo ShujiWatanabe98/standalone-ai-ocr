@@ -5,11 +5,11 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>単体 AI OCR</title>
   <link rel="stylesheet" href="/styles.css?v=20260726-parallel-tasks-1">
-  <link rel="stylesheet" href="/capture-layout.css?v=20260726-overlay-near-value-1">
+  <link rel="stylesheet" href="/capture-layout.css?v=20260726-header-logout-9">
 </head>
 <body>
   <header>
-    <div class="brand"><p class="eyebrow">REHABILITATION DOCUMENT INTELLIGENCE</p><div class="brand-title"><h1>単体 AI OCR</h1><span id="aiIndicator" class="ai-indicator" role="status" aria-label="AI待機中" title="AI待機中">AI</span></div></div>
+    <div class="brand"><p class="eyebrow">REHABILITATION DOCUMENT INTELLIGENCE</p><div class="brand-title"><h1>単体 AI OCR</h1><button id="logoutButton" class="header-logout" type="button">ログアウト</button><span id="aiIndicator" class="ai-indicator" role="status" aria-label="AI待機中" title="AI待機中">AI</span></div></div>
     <input id="patientSelect" type="hidden" value="">
     <div id="health" class="health">接続確認中</div>
   </header>
@@ -24,7 +24,7 @@
         <div class="ocr-comparison">
           <figure><figcaption>読み込んだファイル</figcaption><div class="preview source-preview"><img id="previewImage" alt="選択画像のプレビュー"><p id="previewEmpty">画像を選択してください</p></div></figure>
           <figure><figcaption>OCR結果</figcaption><div class="preview result-preview"><img id="resultImage" alt="OCR結果画像"><div id="ocrOverlay" class="ocr-overlay"></div><p id="resultEmpty"></p></div></figure>
-          <section id="currentJob" class="text-result-pane hidden"><div class="jobhead"><h2>OCR結果（テキストで確認）</h2><div class="jobhead-actions"><span id="jobStatus" class="badge"></span><button id="retryButton" class="secondary hidden">再実行</button><button id="confirmButton" class="primary hidden">修正結果を確定</button></div></div><p id="jobError" class="error"></p><div id="resultEditor"></div></section>
+          <section id="currentJob" class="text-result-pane hidden"><div class="jobhead"><h2>OCR結果（テキストで確認）</h2><div class="jobhead-actions"><span id="jobStatus" class="badge"></span><button id="retryButton" class="secondary hidden">再実行</button><button id="confirmButton" class="primary hidden">結果を確定</button></div></div><p id="jobError" class="error"></p><div id="resultEditor"></div></section>
         </div>
         <div id="batchComparisons" class="batch-comparisons" aria-live="polite"></div>
         <p id="captureMessage" class="message capture-message"></p>
@@ -34,6 +34,6 @@
     <section id="view-patients" class="view"><div class="panel"><h2>患者管理</h2><div class="grid2"><div><h3>患者登録</h3><form id="patientForm"><label>施設内患者ID<input name="facilityPatientId" required></label><label>患者名<input name="name" required></label><label>生年月日<input name="birthDate" type="date"></label><button class="primary">登録</button></form></div><div><h3>登録患者</h3><div id="patientList"></div></div></div></div></section>
   </main>
   <dialog id="detailDialog"><button id="closeDialog" class="close">閉じる</button><div id="detailContent"></div></dialog>
-  <script type="module" src="/app.js?v=20260726-overlay-near-value-1"></script>
+  <script type="module" src="/app.js?v=20260726-header-logout-9"></script>
 </body>
 </html>
