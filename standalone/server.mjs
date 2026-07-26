@@ -16,6 +16,8 @@ const backupDir = path.resolve(process.env.AIOCR_BACKUP_DIR || path.join(here, '
 const port = Number(process.env.AIOCR_PORT || process.env.PORT || 8795);
 const host = process.env.AIOCR_HOST || '127.0.0.1';
 const model = process.env.OPENAI_MODEL || 'gpt-5.6-sol';
+const requestedImageDetail = String(process.env.OPENAI_IMAGE_DETAIL || 'high').toLowerCase();
+const imageDetail = ['low', 'high', 'original', 'auto'].includes(requestedImageDetail) ? requestedImageDetail : 'high';
 const authUser = process.env.AIOCR_USERNAME || '';
 const authPassword = process.env.AIOCR_PASSWORD || '';
 const facilityId = process.env.AIOCR_FACILITY_ID || 'local-facility';
@@ -295,7 +297,7 @@ JSON以外を返さない。すべてのキーを必ず返す。
   const response = await fetch('https://api.openai.com/v1/responses', {
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model, input: [{ role: 'user', content: [{ type: 'input_text', text: prompt }, { type: 'input_image', image_url: imageUrl }] }] }),
+    body: JSON.stringify({ model, input: [{ role: 'user', content: [{ type: 'input_text', text: prompt }, { type: 'input_image', image_url: imageUrl, detail: imageDetail }] }] }),
     signal: AbortSignal.timeout(120000),
   });
   const payload = await response.json();
@@ -322,7 +324,7 @@ async function requestOcr(apiKey, imageUrl, prompt, externalSignal) {
     const response = await fetch('https://api.openai.com/v1/responses', {
       method: 'POST',
       headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model, input: [{ role: 'user', content: [{ type: 'input_text', text: prompt }, { type: 'input_image', image_url: imageUrl }] }] }),
+      body: JSON.stringify({ model, input: [{ role: 'user', content: [{ type: 'input_text', text: prompt }, { type: 'input_image', image_url: imageUrl, detail: imageDetail }] }] }),
       signal: controller.signal,
     });
     const payload = await response.json();
@@ -349,7 +351,7 @@ async function runOcr(jobId) {
   const controller = new AbortController();
   activeOcrControllers.set(jobId, controller);
   job.status = 'PROCESSING'; job.updatedAt = now(); job.error = null;
-  audit('OCR_STARTED', 'job', job.id, { model }); await persist();
+  audit('OCR_STARTED', 'job', job.id, { model, imageDetail }); await persist();
   try {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) throw new Error('OPENAI_API_KEYが設定されていません');
@@ -414,7 +416,7 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || `${host}:${port}`}`);
   try {
     if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && !sameOrigin(req)) return sendJson(res, 403, { error: '不正な送信元です' });
-    if (req.method === 'GET' && url.pathname === '/api/health') return sendJson(res, 200, { ok: true, product: 'Standalone AI OCR', model, apiKeyConfigured: Boolean(process.env.OPENAI_API_KEY) });
+    if (req.method === 'GET' && url.pathname === '/api/health') return sendJson(res, 200, { ok: true, product: 'Standalone AI OCR', model, imageDetail, apiKeyConfigured: Boolean(process.env.OPENAI_API_KEY) });
     if (req.method === 'POST' && url.pathname === '/api/auth/login') {
       if (!authUser || !authPassword) return sendJson(res, 200, { ok: true, userId: 'local-user', tenantId: facilityId });
       if (loginRateLimited(req)) return sendJson(res, 429, { error: 'ログイン失敗が多すぎます。15分後に再試行してください' });

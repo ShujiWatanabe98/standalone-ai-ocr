@@ -19,6 +19,7 @@ const base = `http://127.0.0.1:${address.port}`;
 const auth = `Basic ${Buffer.from('test-admin:test-password').toString('base64')}`;
 const health = await fetch(`${base}/api/health`).then(r => r.json());
 assert.equal(health.ok, true);
+assert.equal(health.imageDetail, 'high');
 const captureHtml = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
 assert.match(captureHtml, /id="imageInput"[^>]*accept="image\/\*"[^>]*multiple/);
 assert.doesNotMatch(captureHtml, /id="imageInput"[^>]*capture=/);
