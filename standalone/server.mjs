@@ -489,6 +489,28 @@ const server = http.createServer(async (req, res) => {
       await persist();
       return sendJson(res, 201, publicHospital(hospital));
     }
+    const hospitalAdminMatch = /^\/api\/admin\/hospitals\/([^/]+)$/.exec(url.pathname);
+    if (req.method === 'PUT' && hospitalAdminMatch) {
+      if (identity.role !== 'ADMIN') return sendJson(res, 403, { error: 'ADMIN権限が必要です' });
+      const hospital = db.hospitals.find(item => item.id === hospitalAdminMatch[1]);
+      if (!hospital) return sendJson(res, 404, { error: '病院が見つかりません' });
+      const body = await readJson(req);
+      const name = safeText(body.name, 120);
+      const loginName = safeText(body.loginName, 80);
+      const password = String(body.password || '');
+      if (!name || !/^[A-Za-z0-9._@-]{3,80}$/.test(loginName)) return sendJson(res, 400, { error: '病院名と3文字以上のログイン名を入力してください' });
+      if (password && (password.length < 8 || password.length > 200)) return sendJson(res, 400, { error: '変更するパスワードは8文字以上で設定してください' });
+      if (loginName === authUser || db.hospitals.some(item => item.id !== hospital.id && item.loginName === loginName)) return sendJson(res, 409, { error: 'このログイン名は既に使用されています' });
+      const previousLoginName = hospital.loginName;
+      hospital.name = name;
+      hospital.loginName = loginName;
+      if (password) hospital.passwordHash = hashPassword(password);
+      hospital.updatedAt = now();
+      for (const [token, session] of sessions) if (session.tenantId === hospital.id) sessions.delete(token);
+      audit('HOSPITAL_UPDATED', 'hospital', hospital.id, { tenantId: hospital.id, hospitalName: hospital.name, previousLoginName, loginName: hospital.loginName, passwordChanged: Boolean(password) });
+      await persist();
+      return sendJson(res, 200, publicHospital(hospital));
+    }
     if (req.method === 'POST' && url.pathname === '/api/analyze-image-geometry') {
       const apiKey = process.env.OPENAI_API_KEY;
       if (!apiKey) return sendJson(res, 503, { error: 'OPENAI_API_KEYが設定されていません' });

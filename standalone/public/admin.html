@@ -34,6 +34,18 @@
       </section>
     </div>
   </main>
-  <script type="module" src="/admin.js?v=20260726-admin-auto-list-1"></script>
+  <dialog id="editHospitalDialog">
+    <button id="closeEditHospital" class="close" type="button">閉じる</button>
+    <h2>病院情報を編集</h2>
+    <form id="editHospitalForm">
+      <input name="id" type="hidden">
+      <label>病院名<input name="name" maxlength="120" required></label>
+      <label>ログイン名<input name="loginName" minlength="3" maxlength="80" pattern="[A-Za-z0-9._@-]+" required></label>
+      <label>新しいパスワード<input name="password" type="password" minlength="8" maxlength="200" autocomplete="new-password" placeholder="変更しない場合は空欄"></label>
+      <button class="primary admin-submit">変更を保存</button>
+      <p id="editHospitalMessage" class="message" role="status"></p>
+    </form>
+  </dialog>
+  <script type="module" src="/admin.js?v=20260726-admin-edit-1"></script>
 </body>
 </html>
