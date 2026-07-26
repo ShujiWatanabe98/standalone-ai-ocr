@@ -39,13 +39,24 @@ assert.equal(jobResponse.status, 202);
 const createdJob = await jobResponse.json();
 assert.equal(createdJob.status, 'REQUEST');
 assert.equal(createdJob.evaluationType, '帳票判定中');
-let finishedJob;
+const parallelJobResponse = await fetch(`${base}/api/jobs`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: auth }, body: JSON.stringify({ patientId: patient.id, imageDataUrl: tinyPng }) });
+assert.equal(parallelJobResponse.status, 202);
+const parallelJob = await parallelJobResponse.json();
+assert.notEqual(parallelJob.id, createdJob.id);
+const runningJobs = await fetch(`${base}/api/jobs`, { headers: { Authorization: auth } }).then(r => r.json());
+assert.ok(runningJobs.some(job => job.id === createdJob.id));
+assert.ok(runningJobs.some(job => job.id === parallelJob.id));
+let finishedJob, finishedParallelJob;
 for (let attempt = 0; attempt < 30; attempt += 1) {
   await new Promise(resolve => setTimeout(resolve, 25));
-  finishedJob = await fetch(`${base}/api/jobs/${createdJob.id}`, { headers: { Authorization: auth } }).then(r => r.json());
-  if (finishedJob.status === 'ERROR') break;
+  [finishedJob, finishedParallelJob] = await Promise.all([
+    fetch(`${base}/api/jobs/${createdJob.id}`, { headers: { Authorization: auth } }).then(r => r.json()),
+    fetch(`${base}/api/jobs/${parallelJob.id}`, { headers: { Authorization: auth } }).then(r => r.json())
+  ]);
+  if (finishedJob.status === 'ERROR' && finishedParallelJob.status === 'ERROR') break;
 }
 assert.equal(finishedJob.status, 'ERROR');
+assert.equal(finishedParallelJob.status, 'ERROR');
 assert.match(finishedJob.error, /OPENAI_API_KEY/);
 const audit = await fetch(`${base}/api/audit`, { headers: { Authorization: auth } }).then(r => r.json());
 assert.ok(audit.some(entry => entry.action === 'OCR_FAILED'));
