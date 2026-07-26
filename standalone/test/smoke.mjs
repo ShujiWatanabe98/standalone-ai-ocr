@@ -25,8 +25,10 @@ assert.match(captureHtml, /id="imageInput"[^>]*accept="image\/\*"[^>]*multiple/)
 assert.doesNotMatch(captureHtml, /id="imageInput"[^>]*capture=/);
 const captureApp = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
 assert.match(captureApp, /resizeLongEdge\(dataUrl,maxLongEdge=2048\)/);
-assert.match(captureApp, /resizeLongEdge\(await cropOuterWhitespaceBase\(source\)\)/);
+assert.match(captureApp, /resizeLongEdge\(await cropOuterWhitespace\(source\)\)/);
 assert.match(captureApp, /resizeLongEdge\(await cropToOcrContent\(source\)\)/);
+assert.match(captureApp, /const median=channel=>/);
+assert.match(captureApp, /const sustainedBounds=/);
 const denied = await fetch(`${base}/api/patients`);
 assert.equal(denied.status, 401);
 const loginResponse = await fetch(`${base}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'test-admin', password: 'test-password' }) });
