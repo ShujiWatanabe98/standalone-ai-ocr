@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>ADMIN｜単体 AI OCR</title>
+  <link rel="stylesheet" href="/styles.css?v=20260726-admin-1">
+  <link rel="stylesheet" href="/admin.css?v=20260726-admin-1">
+</head>
+<body>
+  <header class="admin-header">
+    <div><p class="eyebrow">AI OCR PLATFORM ADMINISTRATION</p><h1>ADMIN 病院管理</h1></div>
+    <div class="admin-session"><span id="adminUser"></span><button id="logoutButton">ログアウト</button></div>
+  </header>
+  <main class="admin-main">
+    <section class="panel admin-intro">
+      <div><p class="eyebrow admin-eyebrow">TENANT MANAGEMENT</p><h2>AI OCRを提供する病院</h2><p>病院ごとに専用ログインを発行します。各病院の患者・OCR履歴は病院IDで分離されます。</p></div>
+      <strong id="hospitalCount" class="hospital-count">0病院</strong>
+    </section>
+    <div class="admin-grid">
+      <section class="panel">
+        <h2>病院を新規登録</h2>
+        <form id="hospitalForm">
+          <label>病院名<input name="name" maxlength="120" autocomplete="organization" required placeholder="例：〇〇リハビリテーション病院"></label>
+          <label>ログイン名<input name="loginName" minlength="3" maxlength="80" pattern="[A-Za-z0-9._@-]+" autocomplete="off" required placeholder="例：hospital-a"></label>
+          <label>パスワード<input name="password" type="password" minlength="8" maxlength="200" autocomplete="new-password" required placeholder="8文字以上"></label>
+          <button class="primary admin-submit">病院を登録</button>
+          <p id="adminMessage" class="message" role="status"></p>
+        </form>
+      </section>
+      <section class="panel">
+        <div class="jobhead"><h2>登録済み病院</h2><button id="refreshHospitals">更新</button></div>
+        <div id="hospitalList" class="hospital-list"></div>
+      </section>
+    </div>
+  </main>
+  <script type="module" src="/admin.js?v=20260726-admin-1"></script>
+</body>
+</html>

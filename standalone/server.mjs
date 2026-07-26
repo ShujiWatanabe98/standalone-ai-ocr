@@ -34,7 +34,7 @@ const allowedImageTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const databaseUrl = process.env.DATABASE_URL || '';
 const sqlPool = databaseUrl ? new pg.Pool({ connectionString: databaseUrl }) : null;
 
-let db = { version: 1, patients: [], jobs: [], audit: [] };
+let db = { version: 2, hospitals: [], patients: [], jobs: [], audit: [] };
 let writeChain = Promise.resolve();
 
 if (!['127.0.0.1', 'localhost', '::1'].includes(host) && (!authUser || !authPassword || !encryptionKey)) {
@@ -68,6 +68,7 @@ if (sqlPool) {
 }
 db.patients.forEach(patient => { if (!patient.tenantId) patient.tenantId = facilityId; });
 db.jobs.forEach(job => { if (!job.tenantId) job.tenantId = facilityId; });
+if (!Array.isArray(db.hospitals)) db.hospitals = [];
 const interruptedJobs = db.jobs.filter(job => ['REQUEST', 'PROCESSING'].includes(job.status));
 if (interruptedJobs.length) {
   interruptedJobs.forEach(job => { job.status = 'ERROR'; job.error = 'サーバー再起動でOCRが中断されました。再OCRを実行してください。'; job.updatedAt = new Date().toISOString(); });
@@ -77,6 +78,19 @@ if (interruptedJobs.length) {
 function now() { return new Date().toISOString(); }
 function id(prefix) { return `${prefix}_${crypto.randomUUID()}`; }
 function safeText(value, max = 200) { return String(value ?? '').trim().slice(0, max); }
+function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
+  return `${salt}:${crypto.scryptSync(String(password), salt, 64).toString('hex')}`;
+}
+function verifyPassword(password, stored) {
+  const [salt, expectedHex] = String(stored || '').split(':');
+  if (!salt || !expectedHex) return false;
+  const supplied = crypto.scryptSync(String(password), salt, 64);
+  const expected = Buffer.from(expectedHex, 'hex');
+  return supplied.length === expected.length && crypto.timingSafeEqual(supplied, expected);
+}
+function publicHospital(hospital) {
+  return { id: hospital.id, name: hospital.name, loginName: hospital.loginName, active: hospital.active !== false, createdAt: hospital.createdAt, updatedAt: hospital.updatedAt };
+}
 function publicPatient(patient, tenantId) {
   return { ...patient, jobCount: db.jobs.filter(j => j.tenantId === tenantId && j.patientId === patient.id).length };
 }
@@ -190,17 +204,19 @@ function requestIdentity(req) {
   if (!header.startsWith('Basic ')) return null;
   let supplied;
   try { supplied = Buffer.from(header.slice(6), 'base64').toString('utf8'); } catch { return null; }
-  const expected = `${authUser}:${authPassword}`;
-  const suppliedBytes = Buffer.from(supplied);
-  const expectedBytes = Buffer.from(expected);
-  return suppliedBytes.length === expectedBytes.length && crypto.timingSafeEqual(suppliedBytes, expectedBytes)
-    ? { userId: authUser, tenantId: facilityId, role: 'ADMIN' } : null;
+  const separator = supplied.indexOf(':');
+  if (separator < 0) return null;
+  return authenticateCredentials(supplied.slice(0, separator), supplied.slice(separator + 1));
 }
 
-function validCredentials(username, password) {
+function authenticateCredentials(username, password) {
   const supplied = Buffer.from(`${username}:${password}`);
   const expected = Buffer.from(`${authUser}:${authPassword}`);
-  return supplied.length === expected.length && crypto.timingSafeEqual(supplied, expected);
+  if (supplied.length === expected.length && crypto.timingSafeEqual(supplied, expected)) return { userId: authUser, tenantId: facilityId, role: 'ADMIN', hospitalName: null };
+  const hospital = db.hospitals.find(item => item.active !== false && item.loginName === username);
+  return hospital && verifyPassword(password, hospital.passwordHash)
+    ? { userId: hospital.loginName, tenantId: hospital.id, role: 'HOSPITAL', hospitalName: hospital.name }
+    : null;
 }
 function sameOrigin(req) {
   const origin = req.headers.origin;
@@ -418,18 +434,19 @@ const server = http.createServer(async (req, res) => {
     if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && !sameOrigin(req)) return sendJson(res, 403, { error: '不正な送信元です' });
     if (req.method === 'GET' && url.pathname === '/api/health') return sendJson(res, 200, { ok: true, product: 'Standalone AI OCR', model, imageDetail, apiKeyConfigured: Boolean(process.env.OPENAI_API_KEY) });
     if (req.method === 'POST' && url.pathname === '/api/auth/login') {
-      if (!authUser || !authPassword) return sendJson(res, 200, { ok: true, userId: 'local-user', tenantId: facilityId });
+      if (!authUser || !authPassword) return sendJson(res, 200, { ok: true, userId: 'local-user', tenantId: facilityId, role: 'ADMIN', redirect: '/admin.html' });
       if (loginRateLimited(req)) return sendJson(res, 429, { error: 'ログイン失敗が多すぎます。15分後に再試行してください' });
       const body = await readJson(req);
-      if (!validCredentials(safeText(body.username), String(body.password || ''))) { recordLoginFailure(req); audit('LOGIN_FAILED', 'authentication', safeText(body.username), { tenantId: facilityId }); await persist(); return sendJson(res, 401, { error: 'ユーザー名またはパスワードが違います' }); }
+      const authenticated = authenticateCredentials(safeText(body.username), String(body.password || ''));
+      if (!authenticated) { recordLoginFailure(req); audit('LOGIN_FAILED', 'authentication', safeText(body.username), { tenantId: facilityId }); await persist(); return sendJson(res, 401, { error: 'ユーザー名またはパスワードが違います' }); }
       const token = crypto.randomBytes(32).toString('base64url');
-      sessions.set(token, { userId: authUser, tenantId: facilityId, role: 'ADMIN', expiresAt: Date.now() + sessionTtlMs });
+      sessions.set(token, { ...authenticated, expiresAt: Date.now() + sessionTtlMs });
       res.setHeader('Set-Cookie', `aiocr_session=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${sessionTtlMs / 1000}${secureCookies ? '; Secure' : ''}`);
-      audit('LOGIN_SUCCEEDED', 'session', token.slice(0, 8), { tenantId: facilityId }); await persist();
-      return sendJson(res, 200, { ok: true, userId: authUser, tenantId: facilityId });
+      audit('LOGIN_SUCCEEDED', 'session', token.slice(0, 8), { tenantId: authenticated.tenantId, role: authenticated.role }); await persist();
+      return sendJson(res, 200, { ok: true, userId: authenticated.userId, tenantId: authenticated.tenantId, role: authenticated.role, hospitalName: authenticated.hospitalName, redirect: authenticated.role === 'ADMIN' ? '/admin.html' : '/' });
     }
     if (req.method === 'GET' && url.pathname === '/api/auth/status') {
-      const identity = requestIdentity(req); return identity ? sendJson(res, 200, { authenticated: true, userId: identity.userId, tenantId: identity.tenantId }) : sendJson(res, 401, { authenticated: false });
+      const identity = requestIdentity(req); return identity ? sendJson(res, 200, { authenticated: true, userId: identity.userId, tenantId: identity.tenantId, role: identity.role, hospitalName: identity.hospitalName || null }) : sendJson(res, 401, { authenticated: false });
     }
     if (req.method === 'POST' && url.pathname === '/api/auth/logout') {
       const token = parseCookies(req).aiocr_session; if (token) sessions.delete(token);
@@ -440,6 +457,37 @@ const server = http.createServer(async (req, res) => {
       if (req.method === 'GET' && ['/login.html', '/styles.css', '/login.js'].includes(url.pathname) && await serveStatic(url.pathname, res)) return;
       if (req.method === 'GET' && url.pathname === '/') { res.writeHead(302, { Location: '/login.html' }); return res.end(); }
       return sendJson(res, 401, { error: '認証が必要です' });
+    }
+    if (req.method === 'GET' && url.pathname === '/') {
+      if (identity.role === 'ADMIN') { res.writeHead(302, { Location: '/admin.html' }); return res.end(); }
+      if (await serveStatic('/index.html', res)) return;
+    }
+    if (req.method === 'GET' && url.pathname === '/index.html' && identity.role === 'ADMIN') {
+      res.writeHead(302, { Location: '/admin.html' }); return res.end();
+    }
+    if (url.pathname === '/admin.html' || url.pathname === '/admin.js') {
+      if (identity.role !== 'ADMIN') return sendJson(res, 403, { error: 'ADMIN権限が必要です' });
+      if (req.method === 'GET' && await serveStatic(url.pathname, res)) return;
+    }
+    if (req.method === 'GET' && url.pathname === '/api/admin/hospitals') {
+      if (identity.role !== 'ADMIN') return sendJson(res, 403, { error: 'ADMIN権限が必要です' });
+      return sendJson(res, 200, db.hospitals.map(publicHospital).sort((a, b) => a.name.localeCompare(b.name, 'ja')));
+    }
+    if (req.method === 'POST' && url.pathname === '/api/admin/hospitals') {
+      if (identity.role !== 'ADMIN') return sendJson(res, 403, { error: 'ADMIN権限が必要です' });
+      const body = await readJson(req);
+      const name = safeText(body.name, 120);
+      const loginName = safeText(body.loginName, 80);
+      const password = String(body.password || '');
+      if (!name || !/^[A-Za-z0-9._@-]{3,80}$/.test(loginName)) return sendJson(res, 400, { error: '病院名と3文字以上のログイン名を入力してください' });
+      if (password.length < 8 || password.length > 200) return sendJson(res, 400, { error: 'パスワードは8文字以上で設定してください' });
+      if (loginName === authUser || db.hospitals.some(item => item.loginName === loginName)) return sendJson(res, 409, { error: 'このログイン名は既に使用されています' });
+      const timestamp = now();
+      const hospital = { id: id('hospital'), name, loginName, passwordHash: hashPassword(password), active: true, createdAt: timestamp, updatedAt: timestamp };
+      db.hospitals.push(hospital);
+      audit('HOSPITAL_CREATED', 'hospital', hospital.id, { tenantId: hospital.id, hospitalName: hospital.name, loginName: hospital.loginName });
+      await persist();
+      return sendJson(res, 201, publicHospital(hospital));
     }
     if (req.method === 'POST' && url.pathname === '/api/analyze-image-geometry') {
       const apiKey = process.env.OPENAI_API_KEY;
