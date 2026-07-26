@@ -23,6 +23,7 @@ const encryptionSecret = process.env.AIOCR_ENCRYPTION_KEY || '';
 const encryptionKey = encryptionSecret ? crypto.createHash('sha256').update(encryptionSecret, 'utf8').digest() : null;
 const sessionTtlMs = 8 * 60 * 60 * 1000;
 const sessions = new Map();
+const activeOcrControllers = new Map();
 const loginAttempts = new Map();
 const maxBodyBytes = 16 * 1024 * 1024;
 const imageRetentionDays = Math.max(0, Number(process.env.AIOCR_IMAGE_RETENTION_DAYS || 0));
@@ -310,17 +311,28 @@ JSON以外を返さない。すべてのキーを必ず返す。
   return { needsCorrection: Boolean(parsed.needsCorrection) && confidence >= 0.65 && width >= 35 && height >= 35, confidence, rotationDegrees: Math.max(-45, Math.min(45, Number(parsed.rotationDegrees) || 0)), reason: safeText(parsed.reason, 300), corners, enhancements, responseId: safeText(payload.id, 120) };
 }
 
-async function requestOcr(apiKey, imageUrl, prompt) {
-  const response = await fetch('https://api.openai.com/v1/responses', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model, input: [{ role: 'user', content: [{ type: 'input_text', text: prompt }, { type: 'input_image', image_url: imageUrl }] }] }),
-    signal: AbortSignal.timeout(120000),
-  });
-  const payload = await response.json();
-  if (!response.ok) throw new Error(payload?.error?.message || `OpenAI API error ${response.status}`);
-  const outputText = extractOutputText(payload);
-  return { result: parseModelJson(outputText), responseId: safeText(payload.id, 120), outputText: safeText(outputText, 12000) };
+async function requestOcr(apiKey, imageUrl, prompt, externalSignal) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(new Error('OCR request timed out')), 120000);
+  timeout.unref?.();
+  const relayAbort = () => controller.abort(externalSignal?.reason);
+  if (externalSignal?.aborted) relayAbort();
+  else externalSignal?.addEventListener('abort', relayAbort, { once: true });
+  try {
+    const response = await fetch('https://api.openai.com/v1/responses', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model, input: [{ role: 'user', content: [{ type: 'input_text', text: prompt }, { type: 'input_image', image_url: imageUrl }] }] }),
+      signal: controller.signal,
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload?.error?.message || `OpenAI API error ${response.status}`);
+    const outputText = extractOutputText(payload);
+    return { result: parseModelJson(outputText), responseId: safeText(payload.id, 120), outputText: safeText(outputText, 12000) };
+  } finally {
+    clearTimeout(timeout);
+    externalSignal?.removeEventListener('abort', relayAbort);
+  }
 }
 
 function filledFieldCount(result) {
@@ -333,7 +345,9 @@ function filledStefTimeCount(result) {
 
 async function runOcr(jobId) {
   const job = db.jobs.find(item => item.id === jobId);
-  if (!job) return;
+  if (!job || job.status !== 'REQUEST') return;
+  const controller = new AbortController();
+  activeOcrControllers.set(jobId, controller);
   job.status = 'PROCESSING'; job.updatedAt = now(); job.error = null;
   audit('OCR_STARTED', 'job', job.id, { model }); await persist();
   try {
@@ -343,16 +357,16 @@ async function runOcr(jobId) {
     if (!bytes) throw new Error('OCR画像が見つかりません');
     const imageUrl = `data:${job.imageType};base64,${bytes.toString('base64')}`;
     const attempts = [];
-    let ocr = await requestOcr(apiKey, imageUrl, buildRehainfoOcrPrompt());
+    let ocr = await requestOcr(apiKey, imageUrl, buildRehainfoOcrPrompt(), controller.signal);
     attempts.push({ responseId: ocr.responseId, filledFieldCount: filledFieldCount(ocr.result), output: ocr.outputText });
     if (ocr.result.testType === 'BBS' && filledFieldCount(ocr.result) === 0) {
       audit('OCR_RETRY_EMPTY_BBS', 'job', job.id, { attempt: 2 }); await persist();
-      ocr = await requestOcr(apiKey, imageUrl, buildBbsRetryPrompt());
+      ocr = await requestOcr(apiKey, imageUrl, buildBbsRetryPrompt(), controller.signal);
       attempts.push({ responseId: ocr.responseId, filledFieldCount: filledFieldCount(ocr.result), output: ocr.outputText });
     }
     if (ocr.result.testType === 'STEF' && filledStefTimeCount(ocr.result) === 0) {
       audit('OCR_RETRY_EMPTY_STEF_TIME', 'job', job.id, { attempt: attempts.length + 1 }); await persist();
-      const stefRetry = await requestOcr(apiKey, imageUrl, buildStefRetryPrompt());
+      const stefRetry = await requestOcr(apiKey, imageUrl, buildStefRetryPrompt(), controller.signal);
       attempts.push({ responseId: stefRetry.responseId, filledFieldCount: filledFieldCount(stefRetry.result), output: stefRetry.outputText });
       const retryFields = new Map(stefRetry.result.fields.map(field => [field.id, field]));
       ocr = {
@@ -374,8 +388,14 @@ async function runOcr(jobId) {
     job.status = 'OCR_DONE'; job.updatedAt = now();
     audit('OCR_COMPLETED', 'job', job.id, { fieldCount: job.result.fields.length, filledFieldCount: filledCount, attempts: attempts.length, responseId: job.rawResponseId });
   } catch (error) {
-    job.status = 'ERROR'; job.error = safeText(error.message || error, 1000); job.updatedAt = now();
-    audit('OCR_FAILED', 'job', job.id, { error: job.error });
+    if (controller.signal.aborted || job.status === 'STOPPED') {
+      job.status = 'STOPPED'; job.error = null; job.updatedAt = now();
+    } else {
+      job.status = 'ERROR'; job.error = safeText(error.message || error, 1000); job.updatedAt = now();
+      audit('OCR_FAILED', 'job', job.id, { error: job.error });
+    }
+  } finally {
+    activeOcrControllers.delete(jobId);
   }
   await persist();
 }
@@ -456,8 +476,18 @@ const server = http.createServer(async (req, res) => {
       const imageBytes = await readImage(job.imageFile); if (!imageBytes) return sendJson(res, 404, { error: '画像が見つかりません' });
       res.writeHead(200, { 'Content-Type': job.imageType, 'Content-Length': imageBytes.length, 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' }); return res.end(imageBytes);
     }
+    const stopMatch = /^\/api\/jobs\/([^/]+)\/stop$/.exec(url.pathname);
+    if (req.method === 'POST' && stopMatch) {
+      const job = db.jobs.find(j => j.tenantId === identity.tenantId && j.id === stopMatch[1]);
+      if (!job) return sendJson(res, 404, { error: 'OCR履歴が見つかりません' });
+      if (!['REQUEST', 'PROCESSING'].includes(job.status)) return sendJson(res, 409, { error: '現在の状態では停止できません' });
+      const previousStatus = job.status; job.status = 'STOPPED'; job.error = null; job.stoppedAt = now(); job.updatedAt = job.stoppedAt;
+      activeOcrControllers.get(job.id)?.abort(new Error('OCR stopped by user'));
+      audit('OCR_STOP_REQUESTED', 'job', job.id, { previousStatus }); await persist();
+      return sendJson(res, 200, jobView(job));
+    }
     const retryMatch = /^\/api\/jobs\/([^/]+)\/retry$/.exec(url.pathname);
-    if (req.method === 'POST' && retryMatch) { const job = db.jobs.find(j => j.tenantId === identity.tenantId && j.id === retryMatch[1]); if (!job) return sendJson(res, 404, { error: 'OCR履歴が見つかりません' }); if (!['ERROR', 'OCR_DONE'].includes(job.status)) return sendJson(res, 409, { error: '現在の状態では再実行できません' }); job.status = 'REQUEST'; job.error = null; job.updatedAt = now(); audit('JOB_RETRIED', 'job', job.id); await persist(); setImmediate(() => runOcr(job.id)); return sendJson(res, 202, jobView(job)); }
+    if (req.method === 'POST' && retryMatch) { const job = db.jobs.find(j => j.tenantId === identity.tenantId && j.id === retryMatch[1]); if (!job) return sendJson(res, 404, { error: 'OCR履歴が見つかりません' }); if (!['ERROR', 'OCR_DONE', 'STOPPED'].includes(job.status)) return sendJson(res, 409, { error: '現在の状態では再実行できません' }); job.status = 'REQUEST'; job.error = null; job.stoppedAt = null; job.updatedAt = now(); audit('JOB_RETRIED', 'job', job.id); await persist(); setImmediate(() => runOcr(job.id)); return sendJson(res, 202, jobView(job)); }
     const confirmMatch = /^\/api\/jobs\/([^/]+)\/confirm$/.exec(url.pathname);
     if (req.method === 'PUT' && confirmMatch) {
       const job = db.jobs.find(j => j.tenantId === identity.tenantId && j.id === confirmMatch[1]); if (!job) return sendJson(res, 404, { error: 'OCR履歴が見つかりません' }); if (job.status !== 'OCR_DONE' && job.status !== 'DONE') return sendJson(res, 409, { error: 'OCR完了後に確定してください' });
