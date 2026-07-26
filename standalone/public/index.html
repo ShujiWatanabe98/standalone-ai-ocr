@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>単体 AI OCR</title>
-  <link rel="stylesheet" href="/styles.css?v=20260726-audit-clear-1">
-  <link rel="stylesheet" href="/capture-layout.css?v=20260726-audit-clear-1">
+  <link rel="stylesheet" href="/styles.css?v=20260726-equal-image-size-1">
+  <link rel="stylesheet" href="/capture-layout.css?v=20260726-equal-image-size-1">
 </head>
 <body>
   <header>
@@ -22,7 +22,7 @@
         </div>
         <p class="message">評価シート名は画像からAI OCRが自動判定します。</p>
         <div class="ocr-comparison">
-          <figure><figcaption>読み込んだファイル</figcaption><div class="preview"><img id="previewImage" alt="選択画像のプレビュー"><p id="previewEmpty">画像を選択してください</p></div></figure>
+          <figure><figcaption>読み込んだファイル</figcaption><div class="preview source-preview"><img id="previewImage" alt="選択画像のプレビュー"><p id="previewEmpty">画像を選択してください</p></div></figure>
           <figure><figcaption>OCR結果</figcaption><div class="preview result-preview"><img id="resultImage" alt="OCR結果画像"><div id="ocrOverlay" class="ocr-overlay"></div><p id="resultEmpty"></p></div></figure>
           <section id="currentJob" class="text-result-pane hidden"><div class="jobhead"><h2>OCR結果（テキストで確認）</h2><div class="jobhead-actions"><span id="jobStatus" class="badge"></span><button id="retryButton" class="secondary hidden">再実行</button><button id="confirmButton" class="primary hidden">修正結果を確定</button></div></div><p id="jobError" class="error"></p><div id="resultEditor"></div></section>
         </div>
