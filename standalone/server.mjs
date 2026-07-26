@@ -495,6 +495,13 @@ const server = http.createServer(async (req, res) => {
       job.confirmedResult = parseModelJson(JSON.stringify(result)); job.status = 'DONE'; job.confirmedAt = now(); job.updatedAt = now(); audit('RESULT_CONFIRMED', 'job', job.id, { fieldCount: job.confirmedResult.fields.length }); await persist(); return sendJson(res, 200, jobView(job));
     }
     if (req.method === 'GET' && url.pathname === '/api/audit') return sendJson(res, 200, db.audit.filter(a => !a.detail?.tenantId || a.detail.tenantId === identity.tenantId).slice(-500).reverse());
+    if (req.method === 'DELETE' && url.pathname === '/api/audit') {
+      if (identity.role !== 'ADMIN') return sendJson(res, 403, { error: '管理者権限が必要です' });
+      const deletedCount = db.audit.length;
+      db.audit = [];
+      await persist();
+      return sendJson(res, 200, { ok: true, deletedCount });
+    }
     if (req.method === 'POST' && url.pathname === '/api/admin/backup') {
       if (identity.role !== 'ADMIN') return sendJson(res, 403, { error: '管理者権限が必要です' });
       const destination = await createBackup(); audit('BACKUP_CREATED', 'backup', path.basename(destination), { tenantId: identity.tenantId }); await persist();

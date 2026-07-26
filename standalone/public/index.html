@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>単体 AI OCR</title>
-  <link rel="stylesheet" href="/styles.css?v=20260726-responsive-1">
-  <link rel="stylesheet" href="/capture-layout.css?v=20260726-responsive-1">
+  <link rel="stylesheet" href="/styles.css?v=20260726-audit-clear-1">
+  <link rel="stylesheet" href="/capture-layout.css?v=20260726-audit-clear-1">
 </head>
 <body>
   <header>
@@ -31,9 +31,9 @@
     </section>
     <section id="view-history" class="view"><div class="panel"><div class="jobhead"><h2>履歴・回覧</h2><button id="refreshHistory">更新</button></div><div id="historyList" class="cards"></div></div></section>
     <section id="view-patients" class="view"><div class="panel"><h2>患者管理</h2><div class="grid2"><div><h3>患者登録</h3><form id="patientForm"><label>施設内患者ID<input name="facilityPatientId" required></label><label>患者名<input name="name" required></label><label>生年月日<input name="birthDate" type="date"></label><button class="primary">登録</button></form></div><div><h3>登録患者</h3><div id="patientList"></div></div></div></div></section>
-    <section id="view-audit" class="view"><div class="panel"><h2>監査ログ</h2><div id="auditList" class="tablewrap"></div></div></section>
+    <section id="view-audit" class="view"><div class="panel"><div class="section-heading"><h2>監査ログ</h2><button id="clearAuditButton" class="stop-button">監査ログを全て削除</button></div><p id="auditMessage" class="message"></p><div id="auditList" class="tablewrap"></div></div></section>
   </main>
   <dialog id="detailDialog"><button id="closeDialog" class="close">閉じる</button><div id="detailContent"></div></dialog>
-  <script type="module" src="/app.js?v=20260726-stop-control-1"></script>
+  <script type="module" src="/app.js?v=20260726-audit-clear-1"></script>
 </body>
 </html>
