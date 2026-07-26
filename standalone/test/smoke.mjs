@@ -25,8 +25,9 @@ assert.match(captureHtml, /id="imageInput"[^>]*accept="image\/\*"[^>]*multiple/)
 assert.doesNotMatch(captureHtml, /id="imageInput"[^>]*capture=/);
 const captureApp = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
 assert.match(captureApp, /resizeLongEdge\(dataUrl,maxLongEdge=2048\)/);
-assert.match(captureApp, /resizeLongEdge\(await cropOuterWhitespace\(source\)\)/);
 assert.match(captureApp, /resizeLongEdge\(await cropToOcrContent\(source\)\)/);
+assert.match(captureApp, /state\.imageDataUrls=await Promise\.all\(files\.map\(read\)\)/);
+assert.match(captureApp, /余白削除・縮小・画像補正を行わず原画像を使用/);
 assert.match(captureApp, /const median=channel=>/);
 assert.match(captureApp, /const sustainedBounds=/);
 assert.match(captureHtml, /id="batchComparisons"/);
