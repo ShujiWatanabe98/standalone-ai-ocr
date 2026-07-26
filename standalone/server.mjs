@@ -34,7 +34,7 @@ const allowedImageTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const databaseUrl = process.env.DATABASE_URL || '';
 const sqlPool = databaseUrl ? new pg.Pool({ connectionString: databaseUrl }) : null;
 
-let db = { version: 2, hospitals: [], patients: [], jobs: [], audit: [] };
+let db = { version: 3, hospitals: [], patients: [], jobs: [] };
 let writeChain = Promise.resolve();
 
 if (!['127.0.0.1', 'localhost', '::1'].includes(host) && (!authUser || !authPassword || !encryptionKey)) {
@@ -69,6 +69,7 @@ if (sqlPool) {
 db.patients.forEach(patient => { if (!patient.tenantId) patient.tenantId = facilityId; });
 db.jobs.forEach(job => { if (!job.tenantId) job.tenantId = facilityId; });
 if (!Array.isArray(db.hospitals)) db.hospitals = [];
+if ('audit' in db) { delete db.audit; await persist(); }
 const interruptedJobs = db.jobs.filter(job => ['REQUEST', 'PROCESSING'].includes(job.status));
 if (interruptedJobs.length) {
   interruptedJobs.forEach(job => { job.status = 'ERROR'; job.error = 'サーバー再起動でOCRが中断されました。再OCRを実行してください。'; job.updatedAt = new Date().toISOString(); });
@@ -93,15 +94,6 @@ function publicHospital(hospital) {
 }
 function publicPatient(patient, tenantId) {
   return { ...patient, jobCount: db.jobs.filter(j => j.tenantId === tenantId && j.patientId === patient.id).length };
-}
-function audit(action, entityType, entityId, detail = {}) {
-  if (!detail.tenantId) {
-    const entity = entityType === 'job' ? db.jobs.find(item => item.id === entityId)
-      : entityType === 'patient' ? db.patients.find(item => item.id === entityId) : null;
-    if (entity?.tenantId) detail.tenantId = entity.tenantId;
-  }
-  db.audit.push({ id: id('audit'), at: now(), actor: 'local-user', action, entityType, entityId, detail });
-  if (db.audit.length > 5000) db.audit.splice(0, db.audit.length - 5000);
 }
 function encryptBytes(content) {
   const plain = Buffer.isBuffer(content) ? content : Buffer.from(content);
@@ -174,7 +166,6 @@ async function enforceImageRetention() {
     if (job.imageDeletedAt || job.status !== 'DONE' || !job.confirmedAt || Date.parse(job.confirmedAt) > threshold) continue;
     await deleteImage(job.imageFile);
     job.imageDeletedAt = now();
-    audit('IMAGE_RETENTION_DELETED', 'job', job.id, { tenantId: job.tenantId, retentionDays: imageRetentionDays });
   }
   await persist();
 }
@@ -367,7 +358,7 @@ async function runOcr(jobId) {
   const controller = new AbortController();
   activeOcrControllers.set(jobId, controller);
   job.status = 'PROCESSING'; job.updatedAt = now(); job.error = null;
-  audit('OCR_STARTED', 'job', job.id, { model, imageDetail }); await persist();
+  await persist();
   try {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) throw new Error('OPENAI_API_KEYが設定されていません');
@@ -378,12 +369,12 @@ async function runOcr(jobId) {
     let ocr = await requestOcr(apiKey, imageUrl, buildRehainfoOcrPrompt(), controller.signal);
     attempts.push({ responseId: ocr.responseId, filledFieldCount: filledFieldCount(ocr.result), output: ocr.outputText });
     if (ocr.result.testType === 'BBS' && filledFieldCount(ocr.result) === 0) {
-      audit('OCR_RETRY_EMPTY_BBS', 'job', job.id, { attempt: 2 }); await persist();
+      await persist();
       ocr = await requestOcr(apiKey, imageUrl, buildBbsRetryPrompt(), controller.signal);
       attempts.push({ responseId: ocr.responseId, filledFieldCount: filledFieldCount(ocr.result), output: ocr.outputText });
     }
     if (ocr.result.testType === 'STEF' && filledStefTimeCount(ocr.result) === 0) {
-      audit('OCR_RETRY_EMPTY_STEF_TIME', 'job', job.id, { attempt: attempts.length + 1 }); await persist();
+      await persist();
       const stefRetry = await requestOcr(apiKey, imageUrl, buildStefRetryPrompt(), controller.signal);
       attempts.push({ responseId: stefRetry.responseId, filledFieldCount: filledFieldCount(stefRetry.result), output: stefRetry.outputText });
       const retryFields = new Map(stefRetry.result.fields.map(field => [field.id, field]));
@@ -404,13 +395,11 @@ async function runOcr(jobId) {
     if (job.result.testType === 'BBS' && filledCount === 0) throw new Error('BBSの点数を読み取れませんでした。画像を確認して再実行してください。');
     if (job.result.testType === 'STEF' && filledStefTimeCount(job.result) === 0) throw new Error('STEFの所要時間を読み取れませんでした。画像を確認して再実行してください。');
     job.status = 'OCR_DONE'; job.updatedAt = now();
-    audit('OCR_COMPLETED', 'job', job.id, { fieldCount: job.result.fields.length, filledFieldCount: filledCount, attempts: attempts.length, responseId: job.rawResponseId });
   } catch (error) {
     if (controller.signal.aborted || job.status === 'STOPPED') {
       job.status = 'STOPPED'; job.error = null; job.updatedAt = now();
     } else {
       job.status = 'ERROR'; job.error = safeText(error.message || error, 1000); job.updatedAt = now();
-      audit('OCR_FAILED', 'job', job.id, { error: job.error });
     }
   } finally {
     activeOcrControllers.delete(jobId);
@@ -438,11 +427,10 @@ const server = http.createServer(async (req, res) => {
       if (loginRateLimited(req)) return sendJson(res, 429, { error: 'ログイン失敗が多すぎます。15分後に再試行してください' });
       const body = await readJson(req);
       const authenticated = authenticateCredentials(safeText(body.username), String(body.password || ''));
-      if (!authenticated) { recordLoginFailure(req); audit('LOGIN_FAILED', 'authentication', safeText(body.username), { tenantId: facilityId }); await persist(); return sendJson(res, 401, { error: 'ユーザー名またはパスワードが違います' }); }
+      if (!authenticated) { recordLoginFailure(req); return sendJson(res, 401, { error: 'ユーザー名またはパスワードが違います' }); }
       const token = crypto.randomBytes(32).toString('base64url');
       sessions.set(token, { ...authenticated, expiresAt: Date.now() + sessionTtlMs });
       res.setHeader('Set-Cookie', `aiocr_session=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${sessionTtlMs / 1000}${secureCookies ? '; Secure' : ''}`);
-      audit('LOGIN_SUCCEEDED', 'session', token.slice(0, 8), { tenantId: authenticated.tenantId, role: authenticated.role }); await persist();
       return sendJson(res, 200, { ok: true, userId: authenticated.userId, tenantId: authenticated.tenantId, role: authenticated.role, hospitalName: authenticated.hospitalName, redirect: authenticated.role === 'ADMIN' ? '/admin.html' : '/' });
     }
     if (req.method === 'GET' && url.pathname === '/api/auth/status') {
@@ -485,7 +473,6 @@ const server = http.createServer(async (req, res) => {
       const timestamp = now();
       const hospital = { id: id('hospital'), name, loginName, passwordHash: hashPassword(password), active: true, createdAt: timestamp, updatedAt: timestamp };
       db.hospitals.push(hospital);
-      audit('HOSPITAL_CREATED', 'hospital', hospital.id, { tenantId: hospital.id, hospitalName: hospital.name, loginName: hospital.loginName });
       await persist();
       return sendJson(res, 201, publicHospital(hospital));
     }
@@ -501,13 +488,11 @@ const server = http.createServer(async (req, res) => {
       if (!name || !/^[A-Za-z0-9._@-]{3,80}$/.test(loginName)) return sendJson(res, 400, { error: '病院名と3文字以上のログイン名を入力してください' });
       if (password && (password.length < 8 || password.length > 200)) return sendJson(res, 400, { error: '変更するパスワードは8文字以上で設定してください' });
       if (loginName === authUser || db.hospitals.some(item => item.id !== hospital.id && item.loginName === loginName)) return sendJson(res, 409, { error: 'このログイン名は既に使用されています' });
-      const previousLoginName = hospital.loginName;
       hospital.name = name;
       hospital.loginName = loginName;
       if (password) hospital.passwordHash = hashPassword(password);
       hospital.updatedAt = now();
       for (const [token, session] of sessions) if (session.tenantId === hospital.id) sessions.delete(token);
-      audit('HOSPITAL_UPDATED', 'hospital', hospital.id, { tenantId: hospital.id, hospitalName: hospital.name, previousLoginName, loginName: hospital.loginName, passwordChanged: Boolean(password) });
       await persist();
       return sendJson(res, 200, publicHospital(hospital));
     }
@@ -516,7 +501,6 @@ const server = http.createServer(async (req, res) => {
       if (!apiKey) return sendJson(res, 503, { error: 'OPENAI_API_KEYが設定されていません' });
       const body = await readJson(req); parseDataUrl(body.imageDataUrl);
       const analysis = await analyzeImageGeometry(apiKey, body.imageDataUrl);
-      audit('AI_IMAGE_GEOMETRY_ANALYZED', 'image', id('geometry'), { needsCorrection: analysis.needsCorrection, confidence: analysis.confidence, responseId: analysis.responseId });
       await persist(); return sendJson(res, 200, analysis);
     }
     if (req.method === 'GET' && url.pathname === '/api/patients') return sendJson(res, 200, db.patients.filter(p => p.tenantId === identity.tenantId).map(p => publicPatient(p, identity.tenantId)));
@@ -525,7 +509,7 @@ const server = http.createServer(async (req, res) => {
       if (!name || !facilityPatientId) return sendJson(res, 400, { error: '患者名と施設内患者IDは必須です' });
       if (db.patients.some(p => p.tenantId === identity.tenantId && p.facilityPatientId === facilityPatientId)) return sendJson(res, 409, { error: '同じ施設内患者IDが登録済みです' });
       const patient = { id: id('patient'), tenantId: identity.tenantId, name, facilityPatientId, birthDate: safeText(body.birthDate, 10), createdAt: now(), updatedAt: now() };
-      db.patients.push(patient); audit('PATIENT_CREATED', 'patient', patient.id, { tenantId: identity.tenantId }); await persist(); return sendJson(res, 201, publicPatient(patient, identity.tenantId));
+      db.patients.push(patient); await persist(); return sendJson(res, 201, publicPatient(patient, identity.tenantId));
     }
     if (req.method === 'GET' && url.pathname === '/api/jobs') {
       const patientId = safeText(url.searchParams.get('patientId'));
@@ -538,7 +522,7 @@ const server = http.createServer(async (req, res) => {
       const image = parseDataUrl(body.imageDataUrl); const jobId = id('ocr'); const ext = image.mime === 'image/png' ? '.png' : image.mime === 'image/webp' ? '.webp' : '.jpg';
       const imageFile = `${jobId}${ext}`; await writeImage(imageFile, image.bytes);
       const job = { id: jobId, tenantId: identity.tenantId, patientId: patient.id, evaluationType: '帳票判定中', status: 'REQUEST', imageFile, imageType: image.mime, result: null, confirmedResult: null, error: null, createdAt: now(), updatedAt: now(), confirmedAt: null };
-      db.jobs.push(job); audit('JOB_CREATED', 'job', job.id, { patientId: patient.id }); await persist(); setImmediate(() => runOcr(job.id)); return sendJson(res, 202, jobView(job));
+      db.jobs.push(job); await persist(); setImmediate(() => runOcr(job.id)); return sendJson(res, 202, jobView(job));
     }
     const jobMatch = /^\/api\/jobs\/([^/]+)$/.exec(url.pathname);
     if (req.method === 'GET' && jobMatch) { const job = db.jobs.find(j => j.tenantId === identity.tenantId && j.id === jobMatch[1]); return job ? sendJson(res, 200, jobView(job)) : sendJson(res, 404, { error: 'OCR履歴が見つかりません' }); }
@@ -553,30 +537,22 @@ const server = http.createServer(async (req, res) => {
       const job = db.jobs.find(j => j.tenantId === identity.tenantId && j.id === stopMatch[1]);
       if (!job) return sendJson(res, 404, { error: 'OCR履歴が見つかりません' });
       if (!['REQUEST', 'PROCESSING'].includes(job.status)) return sendJson(res, 409, { error: '現在の状態では停止できません' });
-      const previousStatus = job.status; job.status = 'STOPPED'; job.error = null; job.stoppedAt = now(); job.updatedAt = job.stoppedAt;
+      job.status = 'STOPPED'; job.error = null; job.stoppedAt = now(); job.updatedAt = job.stoppedAt;
       activeOcrControllers.get(job.id)?.abort(new Error('OCR stopped by user'));
-      audit('OCR_STOP_REQUESTED', 'job', job.id, { previousStatus }); await persist();
+      await persist();
       return sendJson(res, 200, jobView(job));
     }
     const retryMatch = /^\/api\/jobs\/([^/]+)\/retry$/.exec(url.pathname);
-    if (req.method === 'POST' && retryMatch) { const job = db.jobs.find(j => j.tenantId === identity.tenantId && j.id === retryMatch[1]); if (!job) return sendJson(res, 404, { error: 'OCR履歴が見つかりません' }); if (!['ERROR', 'OCR_DONE', 'STOPPED'].includes(job.status)) return sendJson(res, 409, { error: '現在の状態では再実行できません' }); job.status = 'REQUEST'; job.error = null; job.stoppedAt = null; job.updatedAt = now(); audit('JOB_RETRIED', 'job', job.id); await persist(); setImmediate(() => runOcr(job.id)); return sendJson(res, 202, jobView(job)); }
+    if (req.method === 'POST' && retryMatch) { const job = db.jobs.find(j => j.tenantId === identity.tenantId && j.id === retryMatch[1]); if (!job) return sendJson(res, 404, { error: 'OCR履歴が見つかりません' }); if (!['ERROR', 'OCR_DONE', 'STOPPED'].includes(job.status)) return sendJson(res, 409, { error: '現在の状態では再実行できません' }); job.status = 'REQUEST'; job.error = null; job.stoppedAt = null; job.updatedAt = now(); await persist(); setImmediate(() => runOcr(job.id)); return sendJson(res, 202, jobView(job)); }
     const confirmMatch = /^\/api\/jobs\/([^/]+)\/confirm$/.exec(url.pathname);
     if (req.method === 'PUT' && confirmMatch) {
       const job = db.jobs.find(j => j.tenantId === identity.tenantId && j.id === confirmMatch[1]); if (!job) return sendJson(res, 404, { error: 'OCR履歴が見つかりません' }); if (job.status !== 'OCR_DONE' && job.status !== 'DONE') return sendJson(res, 409, { error: 'OCR完了後に確定してください' });
       const body = await readJson(req); const result = body.result; if (!result || !Array.isArray(result.fields)) return sendJson(res, 400, { error: '結果形式が不正です' });
-      job.confirmedResult = parseModelJson(JSON.stringify(result)); job.status = 'DONE'; job.confirmedAt = now(); job.updatedAt = now(); audit('RESULT_CONFIRMED', 'job', job.id, { fieldCount: job.confirmedResult.fields.length }); await persist(); return sendJson(res, 200, jobView(job));
-    }
-    if (req.method === 'GET' && url.pathname === '/api/audit') return sendJson(res, 200, db.audit.filter(a => !a.detail?.tenantId || a.detail.tenantId === identity.tenantId).slice(-500).reverse());
-    if (req.method === 'DELETE' && url.pathname === '/api/audit') {
-      if (identity.role !== 'ADMIN') return sendJson(res, 403, { error: '管理者権限が必要です' });
-      const deletedCount = db.audit.length;
-      db.audit = [];
-      await persist();
-      return sendJson(res, 200, { ok: true, deletedCount });
+      job.confirmedResult = parseModelJson(JSON.stringify(result)); job.status = 'DONE'; job.confirmedAt = now(); job.updatedAt = now(); await persist(); return sendJson(res, 200, jobView(job));
     }
     if (req.method === 'POST' && url.pathname === '/api/admin/backup') {
       if (identity.role !== 'ADMIN') return sendJson(res, 403, { error: '管理者権限が必要です' });
-      const destination = await createBackup(); audit('BACKUP_CREATED', 'backup', path.basename(destination), { tenantId: identity.tenantId }); await persist();
+      const destination = await createBackup(); await persist();
       return sendJson(res, 201, { ok: true, backup: path.basename(destination) });
     }
     if (req.method === 'GET' && await serveStatic(url.pathname, res)) return;

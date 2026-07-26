@@ -1,6 +1,6 @@
 # Standalone AI OCR
 
-患者登録、評価シート画像の取込、非同期AI OCR、結果修正・確定、履歴回覧、監査ログを提供する単体版です。Node.js 18以上だけで起動できます。
+患者登録、評価シート画像の取込、非同期AI OCR、結果修正・確定、履歴回覧を提供する単体版です。Node.js 18以上だけで起動できます。
 
 ```powershell
 # リポジトリ直下の standalone-ai-ocr.local.env に記入
@@ -17,7 +17,7 @@
 - `OPENAI_MODEL`: 既定値 `gpt-5.6-sol`
 - `AIOCR_PORT`: 既定値 `8795`
 - `AIOCR_HOST`: 既定値 `127.0.0.1`
-- `AIOCR_DATA_DIR`: 患者、OCR結果、画像、監査ログの保存先
+- `AIOCR_DATA_DIR`: 患者、OCR結果、画像の保存先
 - `AIOCR_USERNAME`, `AIOCR_PASSWORD`: Basic認証。ローカル外へバインドする場合は必須
 - `AIOCR_FACILITY_ID`: 施設分離用ID
 - `AIOCR_ENCRYPTION_KEY`: 32文字以上。DBと原画像のAES-256-GCM暗号化

@@ -118,14 +118,8 @@ for (let attempt = 0; attempt < 30; attempt += 1) {
 assert.equal(finishedJob.status, 'ERROR');
 assert.equal(finishedParallelJob.status, 'ERROR');
 assert.match(finishedJob.error, /OPENAI_API_KEY/);
-const audit = await fetch(`${base}/api/audit`, { headers: { Authorization: auth } }).then(r => r.json());
-assert.ok(audit.some(entry => entry.action === 'OCR_FAILED'));
-const clearAuditResponse = await fetch(`${base}/api/audit`, { method: 'DELETE', headers: { Authorization: auth } });
-assert.equal(clearAuditResponse.status, 200);
-const clearAuditResult = await clearAuditResponse.json();
-assert.ok(clearAuditResult.deletedCount > 0);
-const clearedAudit = await fetch(`${base}/api/audit`, { headers: { Authorization: auth } }).then(r => r.json());
-assert.deepEqual(clearedAudit, []);
+const removedAuditEndpoint = await fetch(`${base}/api/audit`, { headers: { Authorization: auth } });
+assert.equal(removedAuditEndpoint.status, 404);
 const databaseBytes = await readFile(path.join(temp, 'database.json'));
 assert.equal(databaseBytes.subarray(0, 6).toString(), 'AIOCR1');
 assert.equal(databaseBytes.includes(Buffer.from('テスト患者')), false);

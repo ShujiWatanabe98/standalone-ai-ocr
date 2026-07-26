@@ -55,8 +55,7 @@ header nav button.active {
 }
 
 #view-history > .panel,
-#view-patients > .panel,
-#view-audit > .panel {
+#view-patients > .panel {
   width: 100%;
 }
 
