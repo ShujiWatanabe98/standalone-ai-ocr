@@ -29,6 +29,9 @@ assert.match(captureApp, /resizeLongEdge\(await cropOuterWhitespace\(source\)\)/
 assert.match(captureApp, /resizeLongEdge\(await cropToOcrContent\(source\)\)/);
 assert.match(captureApp, /const median=channel=>/);
 assert.match(captureApp, /const sustainedBounds=/);
+assert.match(captureHtml, /id="batchComparisons"/);
+assert.match(captureApp, /function renderBatchComparisons\(\)/);
+assert.match(captureApp, /OCR結果（テキスト）/);
 const denied = await fetch(`${base}/api/patients`);
 assert.equal(denied.status, 401);
 const loginResponse = await fetch(`${base}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'test-admin', password: 'test-password' }) });
