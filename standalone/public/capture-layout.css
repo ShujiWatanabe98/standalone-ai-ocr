@@ -143,6 +143,14 @@ header nav button.active {
 #detailContent .batch-result-table td {
   padding: 3px 6px;
   line-height: 1.2;
+  border-bottom: 0;
+}
+
+.text-result-pane .batch-result-table tr,
+#detailContent .batch-result-table tr,
+#resultEditor .fieldrow {
+  border: 0;
+  border-bottom: 0;
 }
 
 .text-result-pane .field-value,

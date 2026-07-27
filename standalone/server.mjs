@@ -295,6 +295,13 @@ function jobView(job) {
   const assessmentKeys = [...new Set(sameSheetJobs.map(candidate => candidate.assessmentGroupId || candidate.id))];
   const sheetIndex = assessmentKeys.indexOf(job.assessmentGroupId || job.id);
   const careStage = ['INITIAL', 'FOLLOW_UP', 'DISCHARGE'].includes(job.careStage) ? job.careStage : sheetIndex === 0 ? 'INITIAL' : sheetIndex > 0 ? 'FOLLOW_UP' : 'PENDING';
+  const hasExistingDischarge = db.jobs.some(candidate =>
+    candidate.tenantId === job.tenantId &&
+    candidate.patientId === job.patientId &&
+    candidate.evaluationType === job.evaluationType &&
+    candidate.id !== job.id &&
+    candidate.careStage === 'DISCHARGE'
+  );
   const cleanResult = result => result ? {
     ...result,
     documentType: String(result.documentType ?? '').replace(/[_＿]+/g, ''),
@@ -305,7 +312,7 @@ function jobView(job) {
       value: String(field.value ?? '').replace(/[_＿]+/g, ''),
     })),
   } : result;
-  return { ...job, result: cleanResult(job.result), confirmedResult: cleanResult(job.confirmedResult), careStage, patientName: patient?.name || '削除済み患者', imageUrl: `/api/jobs/${job.id}/image` };
+  return { ...job, result: cleanResult(job.result), confirmedResult: cleanResult(job.confirmedResult), careStage, hasExistingDischarge, patientName: patient?.name || '削除済み患者', imageUrl: `/api/jobs/${job.id}/image` };
 }
 
 function extractOutputText(payload) {
@@ -622,7 +629,7 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || `${host}:${port}`}`);
   try {
     if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && !sameOrigin(req)) return sendJson(res, 403, { error: '不正な送信元です' });
-    if (req.method === 'GET' && url.pathname === '/api/health') return sendJson(res, 200, { ok: true, product: 'Standalone AI OCR', release: '2026-07-27-compact-ocr-no-underscores-1', model, imageDetail, apiKeyConfigured: Boolean(process.env.OPENAI_API_KEY) });
+    if (req.method === 'GET' && url.pathname === '/api/health') return sendJson(res, 200, { ok: true, product: 'Standalone AI OCR', release: '2026-07-27-history-delete-discharge-warning-1', model, imageDetail, apiKeyConfigured: Boolean(process.env.OPENAI_API_KEY) });
     if (req.method === 'POST' && url.pathname === '/api/auth/login') {
       if ((!authUser || !authPassword) && db.hospitals.length === 0) return sendJson(res, 200, { ok: true, userId: 'local-user', tenantId: facilityId, role: 'ADMIN', redirect: '/admin.html' });
       if (loginRateLimited(req)) return sendJson(res, 429, { error: 'ログイン失敗が多すぎます。15分後に再試行してください' });
@@ -736,9 +743,19 @@ const server = http.createServer(async (req, res) => {
       const imageFile = `${jobId}${ext}`; await writeImage(imageFile, image.bytes);
       const job = { id: jobId, tenantId: identity.tenantId, patientId: patient.id, evaluationType: '帳票判定中', status: 'REQUEST', imageFile, imageType: image.mime, result: null, confirmedResult: null, error: null, createdAt: now(), updatedAt: now(), confirmedAt: null };
       db.jobs.push(job); await persist(); setImmediate(() => runOcr(job.id)); return sendJson(res, 202, jobView(job));
-    }
-    const jobMatch = /^\/api\/jobs\/([^/]+)$/.exec(url.pathname);
-    if (req.method === 'GET' && jobMatch) { const job = db.jobs.find(j => j.tenantId === identity.tenantId && j.id === jobMatch[1]); return job ? sendJson(res, 200, jobView(job)) : sendJson(res, 404, { error: 'OCR履歴が見つかりません' }); }
+      }
+      const jobMatch = /^\/api\/jobs\/([^/]+)$/.exec(url.pathname);
+      if (req.method === 'DELETE' && jobMatch) {
+        const jobIndex = db.jobs.findIndex(job => job.tenantId === identity.tenantId && job.id === jobMatch[1]);
+        if (jobIndex < 0) return sendJson(res, 404, { error: 'OCR履歴が見つかりません' });
+        const [job] = db.jobs.splice(jobIndex, 1);
+        activeOcrControllers.get(job.id)?.abort(new Error('OCR history deleted by user'));
+        activeOcrControllers.delete(job.id);
+        await deleteImage(job.imageFile);
+        await persist();
+        return sendJson(res, 200, { ok: true, deletedId: job.id });
+      }
+      if (req.method === 'GET' && jobMatch) { const job = db.jobs.find(j => j.tenantId === identity.tenantId && j.id === jobMatch[1]); return job ? sendJson(res, 200, jobView(job)) : sendJson(res, 404, { error: 'OCR履歴が見つかりません' }); }
     const imageMatch = /^\/api\/jobs\/([^/]+)\/image$/.exec(url.pathname);
     if (req.method === 'GET' && imageMatch) {
       const job = db.jobs.find(j => j.tenantId === identity.tenantId && j.id === imageMatch[1]); if (!job) return sendJson(res, 404, { error: '画像が見つかりません' });
