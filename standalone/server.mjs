@@ -5,9 +5,18 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
 import pg from 'pg';
-import { buildBbsRetryPrompt, buildRehainfoOcrPrompt, buildStefRetryPrompt, normalizeRehainfoResult } from './rehainfo-ocr-definitions.mjs';
+import { buildBbsRetryPrompt, buildBitRetryPrompt, buildRehainfoOcrPrompt, buildStefRetryPrompt, normalizeRehainfoResult } from './rehainfo-ocr-definitions.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+const localEnvFile = path.resolve(here, '..', 'standalone-ai-ocr.local.env');
+if (process.env.AIOCR_SKIP_LOCAL_ENV !== '1' && existsSync(localEnvFile)) {
+  const localEnv = await readFile(localEnvFile, 'utf8');
+  for (const line of localEnv.split(/\r?\n/)) {
+    const match = /^\s*([A-Z][A-Z0-9_]*)\s*=\s*(.*?)\s*$/.exec(line);
+    if (!match || match[2] === '' || process.env[match[1]]) continue;
+    process.env[match[1]] = match[2].replace(/^(['"])(.*)\1$/, '$2');
+  }
+}
 const publicDir = path.join(here, 'public');
 const dataDir = path.resolve(process.env.AIOCR_DATA_DIR || path.join(here, 'data'));
 const imageDir = path.join(dataDir, 'images');
@@ -78,6 +87,37 @@ if (interruptedJobs.length) {
 
 function now() { return new Date().toISOString(); }
 function id(prefix) { return `${prefix}_${crypto.randomUUID()}`; }
+function evaluationPageKey(job) {
+  if (job?.result?.testType === 'BIT') {
+    const match = (job.result.fields || []).map(field => /^BIT_(\d+)_/.exec(String(field.id || ''))).find(Boolean);
+    return match ? `BIT_${match[1]}` : null;
+  }
+  if (job?.result?.testType === 'SLTA_ALL') {
+    const numbers = (job.result.fields || []).map(field => /^#(\d+)$/.exec(String(field.id || ''))).filter(Boolean).map(match => Number(match[1]));
+    return numbers.length ? `SLTA_${Math.min(...numbers)}_${Math.max(...numbers)}` : null;
+  }
+  return null;
+}
+function rebuildAssessmentGroups() {
+  let changed = 0;
+  const grouped = new Map();
+  for (const job of db.jobs.filter(candidate => ['BIT', 'SLTA_ALL'].includes(candidate.result?.testType)).sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
+    const key = `${job.tenantId}|${job.patientId}|${job.result.testType}`;
+    const pageKey = evaluationPageKey(job);
+    let state = grouped.get(key);
+    if (!state || (pageKey && state.pages.has(pageKey))) {
+      state = { id: `assessment_${job.id}`, pages: new Set() };
+      grouped.set(key, state);
+    }
+    if (pageKey) state.pages.add(pageKey);
+    if (job.assessmentGroupId !== state.id) {
+      job.assessmentGroupId = state.id;
+      changed++;
+    }
+  }
+  return changed;
+}
+if (rebuildAssessmentGroups()) await persist();
 function safeText(value, max = 200) { return String(value ?? '').trim().slice(0, max); }
 function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
   return `${salt}:${crypto.scryptSync(String(password), salt, 64).toString('hex')}`;
@@ -187,7 +227,7 @@ function parseCookies(req) {
 }
 
 function requestIdentity(req) {
-  if (!authUser && !authPassword) return { userId: 'local-user', tenantId: facilityId, role: 'ADMIN' };
+  if (!authUser && !authPassword && db.hospitals.length === 0) return { userId: 'local-user', tenantId: facilityId, role: 'ADMIN' };
   const token = parseCookies(req).aiocr_session;
   const session = token ? sessions.get(token) : null;
   if (session && session.expiresAt > Date.now()) return session;
@@ -249,7 +289,13 @@ function parseDataUrl(dataUrl) {
 
 function jobView(job) {
   const patient = db.patients.find(p => p.tenantId === job.tenantId && p.id === job.patientId);
-  return { ...job, patientName: patient?.name || '削除済み患者', imageUrl: `/api/jobs/${job.id}/image` };
+  const sameSheetJobs = db.jobs
+    .filter(candidate => candidate.tenantId === job.tenantId && candidate.patientId === job.patientId && candidate.evaluationType === job.evaluationType && candidate.result && ['OCR_DONE', 'DONE'].includes(candidate.status))
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const assessmentKeys = [...new Set(sameSheetJobs.map(candidate => candidate.assessmentGroupId || candidate.id))];
+  const sheetIndex = assessmentKeys.indexOf(job.assessmentGroupId || job.id);
+  const careStage = ['INITIAL', 'FOLLOW_UP', 'DISCHARGE'].includes(job.careStage) ? job.careStage : sheetIndex === 0 ? 'INITIAL' : sheetIndex > 0 ? 'FOLLOW_UP' : 'PENDING';
+  return { ...job, careStage, patientName: patient?.name || '削除済み患者', imageUrl: `/api/jobs/${job.id}/image` };
 }
 
 function extractOutputText(payload) {
@@ -344,12 +390,130 @@ async function requestOcr(apiKey, imageUrl, prompt, externalSignal) {
   }
 }
 
+async function generateRehabSummary(apiKey, job) {
+  const evaluation = evaluationForSummary(job);
+  const prompt = `あなたはリハビリテーション医療の記録作成支援者です。
+以下の初診時評価結果だけを根拠として、日本語で簡潔な「リハビリ方針案」を作成してください。
+構成は「評価要約」「短期目標」「介入方針」「リスク・注意点」「再評価方針」とし、合計800文字以内にしてください。
+入力にない診断、病歴、予後を推測して断定しないでください。医療者が確認・修正する草案として記載してください。
+
+初診時評価:
+${JSON.stringify(evaluation)}`;
+  const response = await fetch('https://api.openai.com/v1/responses', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model, input: [{ role: 'user', content: [{ type: 'input_text', text: prompt }] }] }),
+    signal: AbortSignal.timeout(60000),
+  });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload?.error?.message || `OpenAI API error ${response.status}`);
+  const summary = safeText(extractOutputText(payload), 4000);
+  if (!summary) throw new Error('サマリを生成できませんでした');
+  return summary;
+}
+
+function evaluationForSummary(job) {
+  const groupedJobs = job.assessmentGroupId
+    ? db.jobs.filter(candidate => candidate.tenantId === job.tenantId && candidate.assessmentGroupId === job.assessmentGroupId && candidate.result).sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    : [job];
+  if (groupedJobs.length > 1) {
+    return {
+      documentType: job.evaluationType,
+      pages: groupedJobs.map((candidate, index) => {
+        const result = candidate.confirmedResult || candidate.result;
+        return {
+          page: evaluationPageKey(candidate) || index + 1,
+          evaluationDate: result?.evaluationDate || '',
+          fields: (result?.fields || []).map(field => ({ label: field.label, value: field.value })).filter(field => String(field.value ?? '').trim() !== ''),
+          notes: result?.notes || '',
+        };
+      }),
+    };
+  }
+  const result = groupedJobs[0]?.confirmedResult || groupedJobs[0]?.result;
+  return {
+    documentType: result?.documentType || job.evaluationType,
+    evaluationDate: result?.evaluationDate || '',
+    fields: (result?.fields || []).map(field => ({ label: field.label, value: field.value })).filter(field => String(field.value ?? '').trim() !== ''),
+    notes: result?.notes || '',
+  };
+}
+
+function previousSameSheetJob(job) {
+  return db.jobs
+    .filter(candidate => candidate.tenantId === job.tenantId && candidate.patientId === job.patientId && candidate.evaluationType === job.evaluationType && candidate.id !== job.id && candidate.result && candidate.createdAt < job.createdAt && (!job.assessmentGroupId || candidate.assessmentGroupId !== job.assessmentGroupId))
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0] || null;
+}
+
+async function generateProgressSummary(apiKey, job) {
+  const previousJob = previousSameSheetJob(job);
+  if (!previousJob) throw new Error('比較できる前回のシートがありません');
+  const prompt = `あなたはリハビリテーション医療の記録作成支援者です。
+同じ患者・同じ評価シートの前回評価と今回評価を比較し、日本語で簡潔な「途中経過サマリ案」を作成してください。
+構成は「改善した点」「改善していない点・低下した点」「総合評価」「今後のリハビリ方針」とし、合計1000文字以内にしてください。
+数値の方向だけで改善と断定できない項目は慎重に表現し、入力にない診断や原因を推測しないでください。医療者が確認・修正する草案として記載してください。
+
+シート名: ${job.evaluationType}
+前回評価:
+${JSON.stringify(evaluationForSummary(previousJob))}
+
+今回評価:
+${JSON.stringify(evaluationForSummary(job))}`;
+  const response = await fetch('https://api.openai.com/v1/responses', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model, input: [{ role: 'user', content: [{ type: 'input_text', text: prompt }] }] }),
+    signal: AbortSignal.timeout(60000),
+  });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload?.error?.message || `OpenAI API error ${response.status}`);
+  const summary = safeText(extractOutputText(payload), 4000);
+  if (!summary) throw new Error('途中経過サマリを生成できませんでした');
+  return summary;
+}
+
+async function generateDischargeSummary(apiKey, job) {
+  const sameSheetJobs = db.jobs
+    .filter(candidate => candidate.tenantId === job.tenantId && candidate.patientId === job.patientId && candidate.evaluationType === job.evaluationType && candidate.result && candidate.createdAt <= job.createdAt)
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  if (!sameSheetJobs.length) throw new Error('退院サマリを作成できる評価履歴がありません');
+  const groupRepresentatives = [...new Map(sameSheetJobs.map(candidate => [candidate.assessmentGroupId || candidate.id, candidate])).values()];
+  const evaluations = groupRepresentatives.map((candidate, index) => ({
+    stage: candidate.id === job.id ? '退院時' : index === 0 ? '初診時' : `途中経過${index}`,
+    ...evaluationForSummary(candidate),
+  }));
+  const prompt = `あなたはリハビリテーション医療の記録作成支援者です。
+同じ患者・同じ評価シートの初診から退院時までの評価履歴を比較し、日本語で簡潔な「退院経過サマリ案」を作成してください。
+構成は「初診時の状態」「リハビリ経過と改善点」「残存課題」「退院時評価」「退院後の生活・リハビリ方針」とし、合計1200文字以内にしてください。
+数値の方向だけで改善と断定できない項目は慎重に表現し、入力にない診断、病歴、生活環境を推測しないでください。医療者が確認・修正する草案として記載してください。
+
+シート名: ${job.evaluationType}
+評価履歴:
+${JSON.stringify(evaluations)}`;
+  const response = await fetch('https://api.openai.com/v1/responses', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model, input: [{ role: 'user', content: [{ type: 'input_text', text: prompt }] }] }),
+    signal: AbortSignal.timeout(60000),
+  });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload?.error?.message || `OpenAI API error ${response.status}`);
+  const summary = safeText(extractOutputText(payload), 4000);
+  if (!summary) throw new Error('退院経過サマリを生成できませんでした');
+  return summary;
+}
+
 function filledFieldCount(result) {
   return (result?.fields || []).filter(field => String(field.value ?? '').trim() !== '').length;
 }
 
 function filledStefTimeCount(result) {
   return (result?.fields || []).filter(field => /^time_\d+$/.test(field.id) && String(field.value ?? '').trim() !== '').length;
+}
+
+function expectedBitFieldCount(result) {
+  const pageMatch = (result?.fields || []).map(field => /^BIT_(\d)_/.exec(field.id)).find(Boolean);
+  return ({ 3: 9, 5: 9, 6: 12, 7: 2 })[pageMatch?.[1]] || 1;
 }
 
 async function runOcr(jobId) {
@@ -368,6 +532,12 @@ async function runOcr(jobId) {
     const attempts = [];
     let ocr = await requestOcr(apiKey, imageUrl, buildRehainfoOcrPrompt(), controller.signal);
     attempts.push({ responseId: ocr.responseId, filledFieldCount: filledFieldCount(ocr.result), output: ocr.outputText });
+    if (ocr.result.testType === 'UNSUPPORTED') {
+      await persist();
+      const bitClassificationRetry = await requestOcr(apiKey, imageUrl, buildBitRetryPrompt(), controller.signal);
+      attempts.push({ responseId: bitClassificationRetry.responseId, filledFieldCount: filledFieldCount(bitClassificationRetry.result), output: bitClassificationRetry.outputText });
+      if (bitClassificationRetry.result.testType === 'BIT' && filledFieldCount(bitClassificationRetry.result) > 0) ocr = bitClassificationRetry;
+    }
     if (ocr.result.testType === 'BBS' && filledFieldCount(ocr.result) === 0) {
       await persist();
       ocr = await requestOcr(apiKey, imageUrl, buildBbsRetryPrompt(), controller.signal);
@@ -387,13 +557,21 @@ async function runOcr(jobId) {
         },
       };
     }
+    if (ocr.result.testType === 'BIT' && filledFieldCount(ocr.result) < expectedBitFieldCount(ocr.result)) {
+      await persist();
+      const bitRetry = await requestOcr(apiKey, imageUrl, buildBitRetryPrompt(), controller.signal);
+      attempts.push({ responseId: bitRetry.responseId, filledFieldCount: filledFieldCount(bitRetry.result), output: bitRetry.outputText });
+      if (filledFieldCount(bitRetry.result) > filledFieldCount(ocr.result)) ocr = bitRetry;
+    }
     job.result = ocr.result;
     job.evaluationType = job.result.documentType || '帳票名不明';
+    rebuildAssessmentGroups();
     job.rawResponseId = ocr.responseId;
     job.ocrAttempts = attempts;
     const filledCount = filledFieldCount(job.result);
     if (job.result.testType === 'BBS' && filledCount === 0) throw new Error('BBSの点数を読み取れませんでした。画像を確認して再実行してください。');
     if (job.result.testType === 'STEF' && filledStefTimeCount(job.result) === 0) throw new Error('STEFの所要時間を読み取れませんでした。画像を確認して再実行してください。');
+    if (job.result.testType === 'BIT' && filledCount === 0) throw new Error('BITの手書き結果を読み取れませんでした。画像を確認して再実行してください。');
     job.status = 'OCR_DONE'; job.updatedAt = now();
   } catch (error) {
     if (controller.signal.aborted || job.status === 'STOPPED') {
@@ -423,7 +601,7 @@ const server = http.createServer(async (req, res) => {
     if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && !sameOrigin(req)) return sendJson(res, 403, { error: '不正な送信元です' });
     if (req.method === 'GET' && url.pathname === '/api/health') return sendJson(res, 200, { ok: true, product: 'Standalone AI OCR', model, imageDetail, apiKeyConfigured: Boolean(process.env.OPENAI_API_KEY) });
     if (req.method === 'POST' && url.pathname === '/api/auth/login') {
-      if (!authUser || !authPassword) return sendJson(res, 200, { ok: true, userId: 'local-user', tenantId: facilityId, role: 'ADMIN', redirect: '/admin.html' });
+      if ((!authUser || !authPassword) && db.hospitals.length === 0) return sendJson(res, 200, { ok: true, userId: 'local-user', tenantId: facilityId, role: 'ADMIN', redirect: '/admin.html' });
       if (loginRateLimited(req)) return sendJson(res, 429, { error: 'ログイン失敗が多すぎます。15分後に再試行してください' });
       const body = await readJson(req);
       const authenticated = authenticateCredentials(safeText(body.username), String(body.password || ''));
@@ -553,6 +731,101 @@ const server = http.createServer(async (req, res) => {
       activeOcrControllers.get(job.id)?.abort(new Error('OCR stopped by user'));
       await persist();
       return sendJson(res, 200, jobView(job));
+    }
+    const dischargeMatch = /^\/api\/jobs\/([^/]+)\/discharge$/.exec(url.pathname);
+    if (req.method === 'POST' && dischargeMatch) {
+      const job = db.jobs.find(candidate => candidate.tenantId === identity.tenantId && candidate.id === dischargeMatch[1]);
+      if (!job) return sendJson(res, 404, { error: 'OCR履歴が見つかりません' });
+      if (!job.result || !['OCR_DONE', 'DONE'].includes(job.status)) return sendJson(res, 409, { error: 'OCR完了後のシートを退院にしてください' });
+      const sameSheetJobs = db.jobs
+        .filter(candidate => candidate.tenantId === identity.tenantId && candidate.patientId === job.patientId && candidate.evaluationType === job.evaluationType && candidate.result && ['OCR_DONE', 'DONE'].includes(candidate.status))
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+      if (sameSheetJobs[0]?.id !== job.id) return sendJson(res, 409, { error: '最新のシートだけを退院にできます' });
+      job.careStage = 'DISCHARGE';
+      job.dischargedAt = now();
+      job.updatedAt = job.dischargedAt;
+      await persist();
+      return sendJson(res, 200, jobView(job));
+    }
+    const undoDischargeMatch = /^\/api\/jobs\/([^/]+)\/discharge\/undo$/.exec(url.pathname);
+    if (req.method === 'POST' && undoDischargeMatch) {
+      const job = db.jobs.find(candidate => candidate.tenantId === identity.tenantId && candidate.id === undoDischargeMatch[1]);
+      if (!job) return sendJson(res, 404, { error: 'OCR履歴が見つかりません' });
+      if (job.careStage !== 'DISCHARGE') return sendJson(res, 409, { error: '退院状態のシートだけを途中経過に戻せます' });
+      const previousJobs = db.jobs.filter(candidate => candidate.tenantId === identity.tenantId && candidate.patientId === job.patientId && candidate.evaluationType === job.evaluationType && candidate.id !== job.id && candidate.result && candidate.createdAt < job.createdAt);
+      if (!previousJobs.length) return sendJson(res, 409, { error: '前回記録がないため途中経過には戻せません' });
+      job.careStage = 'FOLLOW_UP';
+      delete job.dischargedAt;
+      job.updatedAt = now();
+      await persist();
+      return sendJson(res, 200, jobView(job));
+    }
+    const initialSummaryMatch = /^\/api\/jobs\/([^/]+)\/initial-summary$/.exec(url.pathname);
+    if (req.method === 'PUT' && initialSummaryMatch) {
+      const job = db.jobs.find(candidate => candidate.tenantId === identity.tenantId && candidate.id === initialSummaryMatch[1]);
+      if (!job) return sendJson(res, 404, { error: 'OCR履歴が見つかりません' });
+      if (jobView(job).careStage !== 'INITIAL') return sendJson(res, 409, { error: '初診シートだけにリハビリ方針を保存できます' });
+      const body = await readJson(req);
+      job.rehabSummary = safeText(body.rehabSummary, 4000);
+      job.rehabSummaryUpdatedAt = now();
+      job.updatedAt = job.rehabSummaryUpdatedAt;
+      await persist();
+      return sendJson(res, 200, jobView(job));
+    }
+    const generateInitialSummaryMatch = /^\/api\/jobs\/([^/]+)\/initial-summary\/generate$/.exec(url.pathname);
+    if (req.method === 'POST' && generateInitialSummaryMatch) {
+      const job = db.jobs.find(candidate => candidate.tenantId === identity.tenantId && candidate.id === generateInitialSummaryMatch[1]);
+      if (!job) return sendJson(res, 404, { error: 'OCR履歴が見つかりません' });
+      if (jobView(job).careStage !== 'INITIAL') return sendJson(res, 409, { error: '初診シートだけでサマリを生成できます' });
+      if (!job.result) return sendJson(res, 409, { error: 'OCR完了後にサマリを生成してください' });
+      const apiKey = process.env.OPENAI_API_KEY;
+      if (!apiKey) return sendJson(res, 503, { error: 'OPENAI_API_KEYが設定されていません' });
+      const rehabSummary = await generateRehabSummary(apiKey, job);
+      return sendJson(res, 200, { rehabSummary });
+    }
+    const progressSummaryMatch = /^\/api\/jobs\/([^/]+)\/progress-summary$/.exec(url.pathname);
+    if (req.method === 'PUT' && progressSummaryMatch) {
+      const job = db.jobs.find(candidate => candidate.tenantId === identity.tenantId && candidate.id === progressSummaryMatch[1]);
+      if (!job) return sendJson(res, 404, { error: 'OCR履歴が見つかりません' });
+      if (jobView(job).careStage !== 'FOLLOW_UP') return sendJson(res, 409, { error: '途中経過シートだけにサマリを保存できます' });
+      const body = await readJson(req);
+      job.progressSummary = safeText(body.progressSummary, 4000);
+      job.progressSummaryUpdatedAt = now();
+      job.updatedAt = job.progressSummaryUpdatedAt;
+      await persist();
+      return sendJson(res, 200, jobView(job));
+    }
+    const generateProgressSummaryMatch = /^\/api\/jobs\/([^/]+)\/progress-summary\/generate$/.exec(url.pathname);
+    if (req.method === 'POST' && generateProgressSummaryMatch) {
+      const job = db.jobs.find(candidate => candidate.tenantId === identity.tenantId && candidate.id === generateProgressSummaryMatch[1]);
+      if (!job) return sendJson(res, 404, { error: 'OCR履歴が見つかりません' });
+      if (jobView(job).careStage !== 'FOLLOW_UP') return sendJson(res, 409, { error: '途中経過シートだけでサマリを生成できます' });
+      const apiKey = process.env.OPENAI_API_KEY;
+      if (!apiKey) return sendJson(res, 503, { error: 'OPENAI_API_KEYが設定されていません' });
+      const progressSummary = await generateProgressSummary(apiKey, job);
+      return sendJson(res, 200, { progressSummary });
+    }
+    const dischargeSummaryMatch = /^\/api\/jobs\/([^/]+)\/discharge-summary$/.exec(url.pathname);
+    if (req.method === 'PUT' && dischargeSummaryMatch) {
+      const job = db.jobs.find(candidate => candidate.tenantId === identity.tenantId && candidate.id === dischargeSummaryMatch[1]);
+      if (!job) return sendJson(res, 404, { error: 'OCR履歴が見つかりません' });
+      if (jobView(job).careStage !== 'DISCHARGE') return sendJson(res, 409, { error: '退院シートだけに退院経過サマリを保存できます' });
+      const body = await readJson(req);
+      job.dischargeSummary = safeText(body.dischargeSummary, 4000);
+      job.dischargeSummaryUpdatedAt = now();
+      job.updatedAt = job.dischargeSummaryUpdatedAt;
+      await persist();
+      return sendJson(res, 200, jobView(job));
+    }
+    const generateDischargeSummaryMatch = /^\/api\/jobs\/([^/]+)\/discharge-summary\/generate$/.exec(url.pathname);
+    if (req.method === 'POST' && generateDischargeSummaryMatch) {
+      const job = db.jobs.find(candidate => candidate.tenantId === identity.tenantId && candidate.id === generateDischargeSummaryMatch[1]);
+      if (!job) return sendJson(res, 404, { error: 'OCR履歴が見つかりません' });
+      if (jobView(job).careStage !== 'DISCHARGE') return sendJson(res, 409, { error: '退院シートだけで退院経過サマリを生成できます' });
+      const apiKey = process.env.OPENAI_API_KEY;
+      if (!apiKey) return sendJson(res, 503, { error: 'OPENAI_API_KEYが設定されていません' });
+      const dischargeSummary = await generateDischargeSummary(apiKey, job);
+      return sendJson(res, 200, { dischargeSummary });
     }
     const retryMatch = /^\/api\/jobs\/([^/]+)\/retry$/.exec(url.pathname);
     if (req.method === 'POST' && retryMatch) { const job = db.jobs.find(j => j.tenantId === identity.tenantId && j.id === retryMatch[1]); if (!job) return sendJson(res, 404, { error: 'OCR履歴が見つかりません' }); if (!['ERROR', 'OCR_DONE', 'STOPPED'].includes(job.status)) return sendJson(res, 409, { error: '現在の状態では再実行できません' }); job.status = 'REQUEST'; job.error = null; job.stoppedAt = null; job.updatedAt = now(); await persist(); setImmediate(() => runOcr(job.id)); return sendJson(res, 202, jobView(job)); }

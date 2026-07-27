@@ -77,6 +77,23 @@ idは検査1右=time_0、検査1左=time_1、検査2右=time_2、検査2左=time
 ${JSON.stringify({ testType: 'STEF', documentType: 'STEF（簡易上肢機能検査）', evaluationDate: '', fields, notes: '' })}`;
 }
 
+export function buildBitRetryPrompt() {
+  return `この画像がBIT（Behavioural Inattention Test／行動性無視検査）の採点記録用紙かを最初に確認してください。
+「通常検査得点」「行動検査得点」「線分抹消試験」「写真課題」「音読課題」「時計課題」「トランプ課題」などの見出しがあればBITです。BITでなければtestTypeをUNSUPPORTED、fieldsを空配列にしてください。
+印刷された換算表、課題の問題、患者が課題中に付けた印や文字はOCR対象外です。検査者が結果欄に手書きした数字だけを読み取ってください。
+
+対象となる欄:
+- 「誤反応数」「見落し数」「書き落し数」
+- 各行の「評価点」
+- 網掛けされた「得点」
+- 所要時間が手書きされている場合は「所要時間」
+
+細い鉛筆書きも対象です。印刷済み数字と手書き数字を区別し、手書き数字が見えるセルを空欄にしないでください。
+用紙下部のページ番号を確認し、idはBIT_<ページ番号>_<上から数えた結果セル番号>とします。セル番号は0から開始し、左から右、上から下の順です。
+labelには課題名と欄名を具体的に記載します。各値の中心位置を画像左上0・右下100のx、yで返してください。推測できない値だけ空文字にし、JSON以外は返しません。
+{"testType":"BIT|UNSUPPORTED","documentType":"BIT（行動性無視検査）","evaluationDate":"","fields":[{"id":"BIT_5_0","label":"時計課題(a) 誤反応数","value":"0","confidence":0.0,"x":0.0,"y":0.0}],"notes":""}`;
+}
+
 function position(value) {
   if (value === null || value === undefined || value === '') return null;
   const number = Number(value);
