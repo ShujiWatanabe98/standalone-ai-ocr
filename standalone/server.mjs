@@ -500,9 +500,12 @@ async function generateDischargeSummary(apiKey, job) {
     ...evaluationForSummary(candidate),
   }));
   const prompt = `あなたはリハビリテーション医療の記録作成支援者です。
-同じ患者・同じ評価シートの初診から退院時までの評価履歴を比較し、日本語で簡潔な「退院経過サマリ案」を作成してください。
-構成は「初診時の状態」「リハビリ経過と改善点」「残存課題」「退院時評価」「退院後の生活・リハビリ方針」とし、合計1200文字以内にしてください。
+同じ患者・同じ評価シートの初診から退院時までの評価履歴を比較し、次の3種類の退院サマリ案を日本語で作成してください。
+1. dischargeSummary: 医療者向け。「初診時の状態」「リハビリ経過と改善点」「残存課題」「退院時評価」「退院後の生活・リハビリ方針」の構成で1200文字以内。
+2. familySummary: 家族向け。専門用語を避け、できるようになったこと、残る注意点、家庭での見守り・支援方法を600文字以内。
+3. patientSummary: 患者向け。尊重した前向きな表現で、改善したこと、今後気をつけること、自主練習・生活上の目標を600文字以内。
 数値の方向だけで改善と断定できない項目は慎重に表現し、入力にない診断、病歴、生活環境を推測しないでください。医療者が確認・修正する草案として記載してください。
+出力は説明やMarkdownを付けず、{"dischargeSummary":"...","familySummary":"...","patientSummary":"..."} のJSONだけにしてください。
 
 シート名: ${job.evaluationType}
 評価履歴:
@@ -515,9 +518,14 @@ ${JSON.stringify(evaluations)}`;
   });
   const payload = await response.json();
   if (!response.ok) throw new Error(payload?.error?.message || `OpenAI API error ${response.status}`);
-  const summary = safeText(extractOutputText(payload), 4000);
-  if (!summary) throw new Error('退院経過サマリを生成できませんでした');
-  return summary;
+  const generated = parsePlainModelJson(extractOutputText(payload));
+  const summaries = {
+    dischargeSummary: safeText(generated.dischargeSummary, 4000),
+    familySummary: safeText(generated.familySummary, 4000),
+    patientSummary: safeText(generated.patientSummary, 4000),
+  };
+  if (!summaries.dischargeSummary || !summaries.familySummary || !summaries.patientSummary) throw new Error('退院経過サマリを生成できませんでした');
+  return summaries;
 }
 
 function filledFieldCount(result) {
@@ -629,7 +637,7 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || `${host}:${port}`}`);
   try {
     if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && !sameOrigin(req)) return sendJson(res, 403, { error: '不正な送信元です' });
-    if (req.method === 'GET' && url.pathname === '/api/health') return sendJson(res, 200, { ok: true, product: 'Standalone AI OCR', release: '2026-07-27-history-delete-discharge-warning-1', model, imageDetail, apiKeyConfigured: Boolean(process.env.OPENAI_API_KEY) });
+    if (req.method === 'GET' && url.pathname === '/api/health') return sendJson(res, 200, { ok: true, product: 'Standalone AI OCR', release: '2026-07-27-discharge-audience-summaries-1', model, imageDetail, apiKeyConfigured: Boolean(process.env.OPENAI_API_KEY) });
     if (req.method === 'POST' && url.pathname === '/api/auth/login') {
       if ((!authUser || !authPassword) && db.hospitals.length === 0) return sendJson(res, 200, { ok: true, userId: 'local-user', tenantId: facilityId, role: 'ADMIN', redirect: '/admin.html' });
       if (loginRateLimited(req)) return sendJson(res, 429, { error: 'ログイン失敗が多すぎます。15分後に再試行してください' });
@@ -852,6 +860,8 @@ const server = http.createServer(async (req, res) => {
       if (jobView(job).careStage !== 'DISCHARGE') return sendJson(res, 409, { error: '退院シートだけに退院経過サマリを保存できます' });
       const body = await readJson(req);
       job.dischargeSummary = safeText(body.dischargeSummary, 4000);
+      job.familySummary = safeText(body.familySummary, 4000);
+      job.patientSummary = safeText(body.patientSummary, 4000);
       job.dischargeSummaryUpdatedAt = now();
       job.updatedAt = job.dischargeSummaryUpdatedAt;
       await persist();
@@ -864,8 +874,8 @@ const server = http.createServer(async (req, res) => {
       if (jobView(job).careStage !== 'DISCHARGE') return sendJson(res, 409, { error: '退院シートだけで退院経過サマリを生成できます' });
       const apiKey = process.env.OPENAI_API_KEY;
       if (!apiKey) return sendJson(res, 503, { error: 'OPENAI_API_KEYが設定されていません' });
-      const dischargeSummary = await generateDischargeSummary(apiKey, job);
-      return sendJson(res, 200, { dischargeSummary });
+      const summaries = await generateDischargeSummary(apiKey, job);
+      return sendJson(res, 200, summaries);
     }
     const retryMatch = /^\/api\/jobs\/([^/]+)\/retry$/.exec(url.pathname);
     if (req.method === 'POST' && retryMatch) { const job = db.jobs.find(j => j.tenantId === identity.tenantId && j.id === retryMatch[1]); if (!job) return sendJson(res, 404, { error: 'OCR履歴が見つかりません' }); if (!['ERROR', 'OCR_DONE', 'STOPPED'].includes(job.status)) return sendJson(res, 409, { error: '現在の状態では再実行できません' }); job.status = 'REQUEST'; job.error = null; job.stoppedAt = null; job.updatedAt = now(); await persist(); setImmediate(() => runOcr(job.id)); return sendJson(res, 202, jobView(job)); }
