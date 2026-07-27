@@ -114,6 +114,10 @@ function position(value) {
   return Number.isFinite(number) ? Math.max(0, Math.min(100, number)) : null;
 }
 
+function withoutOcrUnderscores(value) {
+  return String(value ?? '').replace(/[_＿]+/g, '').trim();
+}
+
 export function normalizeRehainfoResult(parsed) {
   const testType = String(parsed?.testType || 'UNSUPPORTED');
   const definition = REHAINFO_OCR_DEFINITIONS[testType];
@@ -135,7 +139,7 @@ export function normalizeRehainfoResult(parsed) {
   if (definition.fields) {
     fields = definition.fields.map(field => {
       const source = incoming.get(field.id) || {};
-      let value = String(source.value ?? '').trim();
+      let value = withoutOcrUnderscores(source.value);
       if (field.allowedValues && !field.allowedValues.includes(value)) value = '';
       return { id: field.id, label: field.label, value, confidence: Number.isFinite(Number(source.confidence)) ? Math.max(0, Math.min(1, Number(source.confidence))) : null, x: position(source.x), y: position(source.y) };
     });
@@ -143,7 +147,7 @@ export function normalizeRehainfoResult(parsed) {
     fields = [...incoming.values()].filter(field => {
       const id = String(field.id || '');
       return testType === 'SLTA_ALL' ? /^#\d{1,3}$/.test(id) : /^BIT_[1-7]_\d{1,3}$/.test(id);
-    }).slice(0, 300).map(field => ({ id: String(field.id), label: String(field.label || field.id).slice(0, 120), value: String(field.value ?? '').slice(0, 1000), confidence: Number.isFinite(Number(field.confidence)) ? Math.max(0, Math.min(1, Number(field.confidence))) : null, x: position(field.x), y: position(field.y) }));
+    }).slice(0, 300).map(field => ({ id: String(field.id), label: withoutOcrUnderscores(field.label || field.id).slice(0, 120), value: withoutOcrUnderscores(field.value).slice(0, 1000), confidence: Number.isFinite(Number(field.confidence)) ? Math.max(0, Math.min(1, Number(field.confidence))) : null, x: position(field.x), y: position(field.y) }));
   }
   return { testType, documentType: definition.documentType, evaluationDate: String(parsed.evaluationDate || '').slice(0, 20), fields, notes: String(parsed.notes || '').slice(0, 3000) };
 }

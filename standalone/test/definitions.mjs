@@ -33,4 +33,7 @@ const unsupported = normalizeRehainfoResult({ testType: 'UNKNOWN', fields: [{ id
 assert.equal(unsupported.testType, 'UNSUPPORTED');
 assert.equal(unsupported.fields.length, 0);
 
+const noUnderscores = normalizeRehainfoResult({ testType: 'BBS', fields: [{ id: '#0', value: '__2＿' }] });
+assert.equal(noUnderscores.fields[0].value, '2');
+
 console.log('rehainfo OCR definitions test: OK');
