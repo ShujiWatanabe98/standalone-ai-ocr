@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
 import pg from 'pg';
-import { buildBbsRetryPrompt, buildBitRetryPrompt, buildFmaLowerRetryPrompt, buildRehainfoOcrPrompt, buildStefRetryPrompt, normalizeRehainfoResult } from './rehainfo-ocr-definitions.mjs';
+import { applyKnownSltaLabels, buildBbsRetryPrompt, buildBitRetryPrompt, buildFmaLowerRetryPrompt, buildFmaUpperRetryPrompt, buildRehainfoOcrPrompt, buildSltaProblemResponseRetryPrompt, buildStefRetryPrompt, normalizeRehainfoResult } from './rehainfo-ocr-definitions.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const localEnvFile = path.resolve(here, '..', 'standalone-ai-ocr.local.env');
@@ -555,6 +555,8 @@ async function runOcr(jobId) {
     if (!bytes) throw new Error('OCR画像が見つかりません');
     const imageUrl = `data:${job.imageType};base64,${bytes.toString('base64')}`;
     const attempts = [];
+    let fmaLowerSpecializedAttempted = false;
+    let fmaUpperSpecializedAttempted = false;
     let ocr = await requestOcr(apiKey, imageUrl, buildRehainfoOcrPrompt(), controller.signal);
     attempts.push({ responseId: ocr.responseId, filledFieldCount: filledFieldCount(ocr.result), output: ocr.outputText });
     if (ocr.result.testType === 'UNSUPPORTED') {
@@ -566,21 +568,66 @@ async function runOcr(jobId) {
     if (ocr.result.testType === 'UNSUPPORTED' || (ocr.result.testType === 'FMA_1' && filledFieldCount(ocr.result) <= 17)) {
       await persist();
       const fmaLowerClassificationRetry = await requestOcr(apiKey, imageUrl, buildFmaLowerRetryPrompt(), controller.signal);
+      fmaLowerSpecializedAttempted = true;
       attempts.push({ responseId: fmaLowerClassificationRetry.responseId, filledFieldCount: filledFieldCount(fmaLowerClassificationRetry.result), output: fmaLowerClassificationRetry.outputText });
       if (fmaLowerClassificationRetry.result.testType === 'FMA_2' && filledFieldCount(fmaLowerClassificationRetry.result) > 0) ocr = fmaLowerClassificationRetry;
     }
-    if (ocr.result.testType === 'FMA_2' && filledFieldCount(ocr.result) < 17) {
+    if (ocr.result.testType === 'FMA_1' && !fmaUpperSpecializedAttempted) {
+      await persist();
+      const fmaUpperRetry = await requestOcr(apiKey, imageUrl, buildFmaUpperRetryPrompt(), controller.signal);
+      fmaUpperSpecializedAttempted = true;
+      attempts.push({ responseId: fmaUpperRetry.responseId, filledFieldCount: filledFieldCount(fmaUpperRetry.result), output: fmaUpperRetry.outputText });
+      if (fmaUpperRetry.result.testType === 'FMA_1' && filledFieldCount(fmaUpperRetry.result) > 0) {
+        const originalFields = new Map(ocr.result.fields.map(field => [field.id, field]));
+        ocr = {
+          ...fmaUpperRetry,
+          result: {
+            ...fmaUpperRetry.result,
+            fields: fmaUpperRetry.result.fields.map(field => {
+              const original = originalFields.get(field.id);
+              return field.value || !original?.value ? field : { ...field, value: original.value, confidence: original.confidence, x: original.x, y: original.y };
+            }),
+          },
+        };
+      }
+    }
+    if (ocr.result.testType === 'FMA_2' && (!fmaLowerSpecializedAttempted || filledFieldCount(ocr.result) < 17)) {
       await persist();
       const fmaLowerRetry = await requestOcr(apiKey, imageUrl, buildFmaLowerRetryPrompt(), controller.signal);
       attempts.push({ responseId: fmaLowerRetry.responseId, filledFieldCount: filledFieldCount(fmaLowerRetry.result), output: fmaLowerRetry.outputText });
-      if (fmaLowerRetry.result.testType === 'FMA_2' && filledFieldCount(fmaLowerRetry.result) > filledFieldCount(ocr.result)) ocr = fmaLowerRetry;
+      if (fmaLowerRetry.result.testType === 'FMA_2' && filledFieldCount(fmaLowerRetry.result) > 0) {
+        const originalFields = new Map(ocr.result.fields.map(field => [field.id, field]));
+        ocr = {
+          ...fmaLowerRetry,
+          result: {
+            ...fmaLowerRetry.result,
+            fields: fmaLowerRetry.result.fields.map(field => {
+              const original = originalFields.get(field.id);
+              return field.value || !original?.value ? field : { ...field, value: original.value, confidence: original.confidence, x: original.x, y: original.y };
+            }),
+          },
+        };
+      }
     }
-    if (ocr.result.testType === 'BBS' && filledFieldCount(ocr.result) === 0) {
+    if (ocr.result.testType === 'BBS') {
       await persist();
-      ocr = await requestOcr(apiKey, imageUrl, buildBbsRetryPrompt(), controller.signal);
-      attempts.push({ responseId: ocr.responseId, filledFieldCount: filledFieldCount(ocr.result), output: ocr.outputText });
+      const bbsRetry = await requestOcr(apiKey, imageUrl, buildBbsRetryPrompt(), controller.signal);
+      attempts.push({ responseId: bbsRetry.responseId, filledFieldCount: filledFieldCount(bbsRetry.result), output: bbsRetry.outputText });
+      if (bbsRetry.result.testType === 'BBS' && filledFieldCount(bbsRetry.result) > 0) {
+        const originalFields = new Map(ocr.result.fields.map(field => [field.id, field]));
+        ocr = {
+          ...bbsRetry,
+          result: {
+            ...bbsRetry.result,
+            fields: bbsRetry.result.fields.map(field => {
+              const original = originalFields.get(field.id);
+              return field.value || !original?.value ? field : { ...field, value: original.value, confidence: original.confidence, x: original.x, y: original.y };
+            }),
+          },
+        };
+      }
     }
-    if (ocr.result.testType === 'STEF' && filledStefTimeCount(ocr.result) === 0) {
+    if (ocr.result.testType === 'STEF') {
       await persist();
       const stefRetry = await requestOcr(apiKey, imageUrl, buildStefRetryPrompt(), controller.signal);
       attempts.push({ responseId: stefRetry.responseId, filledFieldCount: filledFieldCount(stefRetry.result), output: stefRetry.outputText });
@@ -589,10 +636,43 @@ async function runOcr(jobId) {
         ...stefRetry,
         result: {
           ...ocr.result,
-          fields: ocr.result.fields.map(field => /^time_\d+$/.test(field.id) && retryFields.has(field.id) ? retryFields.get(field.id) : field),
+          fields: ocr.result.fields.map(field => {
+            if (!/^time_\d+$/.test(field.id) || !retryFields.has(field.id)) return field;
+            const retryField = retryFields.get(field.id);
+            return retryField.value || !field.value
+              ? retryField
+              : { ...retryField, value: field.value, confidence: field.confidence, x: field.x, y: field.y };
+          }),
           notes: [ocr.result.notes, stefRetry.result.notes].filter(Boolean).join(' / '),
         },
       };
+    }
+    if (ocr.result.testType === 'SLTA_ALL') {
+      await persist();
+      const sltaProblemResponseRetry = await requestOcr(apiKey, imageUrl, buildSltaProblemResponseRetryPrompt(ocr.result.fields), controller.signal);
+      attempts.push({ responseId: sltaProblemResponseRetry.responseId, filledFieldCount: filledFieldCount(sltaProblemResponseRetry.result), output: sltaProblemResponseRetry.outputText });
+      if (sltaProblemResponseRetry.result.testType === 'SLTA_ALL') {
+        const textFields = sltaProblemResponseRetry.result.fields.filter(field => /^SLTA_(?:[1-9]|1[0-2])_TEXT_\d+$/.test(field.id) && field.value);
+        const relabeledScores = new Map(sltaProblemResponseRetry.result.fields
+          .filter(field => /^#\d+$/.test(field.id) && field.label && !/^(?:6段階評価|正答数|所要時間)$/.test(field.label))
+          .map(field => [field.id, field]));
+        if (textFields.length || relabeledScores.size) {
+          const scoreFields = ocr.result.fields
+            .filter(field => !/^SLTA_(?:[1-9]|1[0-2])_TEXT_\d+$/.test(field.id))
+            .map(field => {
+              const relabeled = relabeledScores.get(field.id);
+              return relabeled ? { ...field, label: relabeled.label } : field;
+            });
+          ocr = {
+            ...ocr,
+            result: {
+              ...ocr.result,
+              fields: [...scoreFields, ...textFields],
+              notes: [ocr.result.notes, sltaProblemResponseRetry.result.notes].filter(Boolean).join(' / '),
+            },
+          };
+        }
+      }
     }
     if (ocr.result.testType === 'BIT' && filledFieldCount(ocr.result) < expectedBitFieldCount(ocr.result)) {
       await persist();
@@ -600,7 +680,7 @@ async function runOcr(jobId) {
       attempts.push({ responseId: bitRetry.responseId, filledFieldCount: filledFieldCount(bitRetry.result), output: bitRetry.outputText });
       if (filledFieldCount(bitRetry.result) > filledFieldCount(ocr.result)) ocr = bitRetry;
     }
-    job.result = ocr.result;
+    job.result = applyKnownSltaLabels(ocr.result);
     job.evaluationType = job.result.documentType || '帳票名不明';
     rebuildAssessmentGroups();
     job.rawResponseId = ocr.responseId;
@@ -637,7 +717,7 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || `${host}:${port}`}`);
   try {
     if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && !sameOrigin(req)) return sendJson(res, 403, { error: '不正な送信元です' });
-    if (req.method === 'GET' && url.pathname === '/api/health') return sendJson(res, 200, { ok: true, product: 'Standalone AI OCR', release: '2026-07-27-discharge-audience-summaries-1', model, imageDetail, apiKeyConfigured: Boolean(process.env.OPENAI_API_KEY) });
+    if (req.method === 'GET' && url.pathname === '/api/health') return sendJson(res, 200, { ok: true, product: 'Standalone AI OCR', release: '2026-07-27-ocr-item-labels-1', model, imageDetail, apiKeyConfigured: Boolean(process.env.OPENAI_API_KEY) });
     if (req.method === 'POST' && url.pathname === '/api/auth/login') {
       if ((!authUser || !authPassword) && db.hospitals.length === 0) return sendJson(res, 200, { ok: true, userId: 'local-user', tenantId: facilityId, role: 'ADMIN', redirect: '/admin.html' });
       if (loginRateLimited(req)) return sendJson(res, 429, { error: 'ログイン失敗が多すぎます。15分後に再試行してください' });
