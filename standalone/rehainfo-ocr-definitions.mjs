@@ -61,6 +61,20 @@ export function buildBbsRetryPrompt() {
 {"testType":"BBS","documentType":"Berg Balance Scale（BBS）","evaluationDate":"","fields":[{"id":"#0","label":"結果 #0","value":"0","confidence":0.0,"x":0.0,"y":0.0}],"notes":""}`;
 }
 
+export function buildFmaLowerRetryPrompt() {
+  const labels = ['膝屈筋群', '膝蓋腱・アキレス腱', '股屈曲', '膝屈曲', '足背屈', '股伸展', '内転', '膝伸展', '足底屈', '膝屈曲', '足背屈', '膝90°まで屈曲', '足関節背屈', '腱反射', '振戦', '測定異常', '非麻痺側との時間差'];
+  const fields = labels.map((label, index) => ({ id: `#${index}`, label, value: '', confidence: 0, x: 0, y: 0 }));
+  return `この画像が「Fugl-Meyer Assessment（FMA）下肢機能」の評価用紙かを、用紙上部の表題で確認してください。
+FMA下肢でなければtestTypeをUNSUPPORTED、fieldsを空配列にしてください。
+
+FMA下肢の場合は、表の右端にある「結果」列の手書き数字だけを上から順に17個読み取ります。
+対象値は0、1、2のいずれかです。さらに右側の細い「#」列に印刷された0〜16、説明文中の採点基準、ページ番号はOCR結果に含めないでください。
+細い縦線のように見える手書きの1、丸く書かれた0、崩れた2を注意深く区別してください。
+各項目のidは上から#0〜#16で固定し、省略や並べ替えをしないでください。各値の中心位置を画像左上0・右下100のx、yで返してください。
+JSON以外は返しません。
+${JSON.stringify({ testType: 'FMA_2|UNSUPPORTED', documentType: 'Fugl-Meyer Assessment（FMA）下肢', evaluationDate: '', fields, notes: '' })}`;
+}
+
 export function buildStefRetryPrompt() {
   const fields = Array.from({ length: 20 }, (_, index) => ({
     id: `time_${index}`,

@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict';
-import { buildBitRetryPrompt, buildRehainfoOcrPrompt, normalizeRehainfoResult } from '../rehainfo-ocr-definitions.mjs';
+import { buildBitRetryPrompt, buildFmaLowerRetryPrompt, buildRehainfoOcrPrompt, normalizeRehainfoResult } from '../rehainfo-ocr-definitions.mjs';
 
 const prompt = buildRehainfoOcrPrompt();
 for (const type of ['FMA_1', 'FMA_2', 'BBS', 'KOHS_1', 'STEF', 'SLTA_ALL', 'BIT']) assert.ok(prompt.includes(type));
 assert.match(buildBitRetryPrompt(), /手書きした数字だけ/);
 assert.match(buildBitRetryPrompt(), /写真課題/);
 assert.match(buildBitRetryPrompt(), /音読課題/);
+assert.match(buildFmaLowerRetryPrompt(), /FMA）下肢機能/);
+assert.match(buildFmaLowerRetryPrompt(), /右端にある「結果」列/);
+assert.match(buildFmaLowerRetryPrompt(), /印刷された0〜16/);
 
 const fma = normalizeRehainfoResult({ testType: 'FMA_1', fields: [{ id: '#0', value: '2' }, { id: '#1', value: '9' }] });
 assert.equal(fma.fields.length, 33);

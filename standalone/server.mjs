@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
 import pg from 'pg';
-import { buildBbsRetryPrompt, buildBitRetryPrompt, buildRehainfoOcrPrompt, buildStefRetryPrompt, normalizeRehainfoResult } from './rehainfo-ocr-definitions.mjs';
+import { buildBbsRetryPrompt, buildBitRetryPrompt, buildFmaLowerRetryPrompt, buildRehainfoOcrPrompt, buildStefRetryPrompt, normalizeRehainfoResult } from './rehainfo-ocr-definitions.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const localEnvFile = path.resolve(here, '..', 'standalone-ai-ocr.local.env');
@@ -538,6 +538,18 @@ async function runOcr(jobId) {
       attempts.push({ responseId: bitClassificationRetry.responseId, filledFieldCount: filledFieldCount(bitClassificationRetry.result), output: bitClassificationRetry.outputText });
       if (bitClassificationRetry.result.testType === 'BIT' && filledFieldCount(bitClassificationRetry.result) > 0) ocr = bitClassificationRetry;
     }
+    if (ocr.result.testType === 'UNSUPPORTED' || (ocr.result.testType === 'FMA_1' && filledFieldCount(ocr.result) <= 17)) {
+      await persist();
+      const fmaLowerClassificationRetry = await requestOcr(apiKey, imageUrl, buildFmaLowerRetryPrompt(), controller.signal);
+      attempts.push({ responseId: fmaLowerClassificationRetry.responseId, filledFieldCount: filledFieldCount(fmaLowerClassificationRetry.result), output: fmaLowerClassificationRetry.outputText });
+      if (fmaLowerClassificationRetry.result.testType === 'FMA_2' && filledFieldCount(fmaLowerClassificationRetry.result) > 0) ocr = fmaLowerClassificationRetry;
+    }
+    if (ocr.result.testType === 'FMA_2' && filledFieldCount(ocr.result) < 17) {
+      await persist();
+      const fmaLowerRetry = await requestOcr(apiKey, imageUrl, buildFmaLowerRetryPrompt(), controller.signal);
+      attempts.push({ responseId: fmaLowerRetry.responseId, filledFieldCount: filledFieldCount(fmaLowerRetry.result), output: fmaLowerRetry.outputText });
+      if (fmaLowerRetry.result.testType === 'FMA_2' && filledFieldCount(fmaLowerRetry.result) > filledFieldCount(ocr.result)) ocr = fmaLowerRetry;
+    }
     if (ocr.result.testType === 'BBS' && filledFieldCount(ocr.result) === 0) {
       await persist();
       ocr = await requestOcr(apiKey, imageUrl, buildBbsRetryPrompt(), controller.signal);
@@ -570,6 +582,7 @@ async function runOcr(jobId) {
     job.ocrAttempts = attempts;
     const filledCount = filledFieldCount(job.result);
     if (job.result.testType === 'BBS' && filledCount === 0) throw new Error('BBSの点数を読み取れませんでした。画像を確認して再実行してください。');
+    if (job.result.testType === 'FMA_2' && filledCount === 0) throw new Error('FMA下肢の結果欄を読み取れませんでした。画像を確認して再実行してください。');
     if (job.result.testType === 'STEF' && filledStefTimeCount(job.result) === 0) throw new Error('STEFの所要時間を読み取れませんでした。画像を確認して再実行してください。');
     if (job.result.testType === 'BIT' && filledCount === 0) throw new Error('BITの手書き結果を読み取れませんでした。画像を確認して再実行してください。');
     job.status = 'OCR_DONE'; job.updatedAt = now();
@@ -599,7 +612,7 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || `${host}:${port}`}`);
   try {
     if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && !sameOrigin(req)) return sendJson(res, 403, { error: '不正な送信元です' });
-    if (req.method === 'GET' && url.pathname === '/api/health') return sendJson(res, 200, { ok: true, product: 'Standalone AI OCR', release: '2026-07-27-all-updates-1', model, imageDetail, apiKeyConfigured: Boolean(process.env.OPENAI_API_KEY) });
+    if (req.method === 'GET' && url.pathname === '/api/health') return sendJson(res, 200, { ok: true, product: 'Standalone AI OCR', release: '2026-07-27-fma-lower-retry-1', model, imageDetail, apiKeyConfigured: Boolean(process.env.OPENAI_API_KEY) });
     if (req.method === 'POST' && url.pathname === '/api/auth/login') {
       if ((!authUser || !authPassword) && db.hospitals.length === 0) return sendJson(res, 200, { ok: true, userId: 'local-user', tenantId: facilityId, role: 'ADMIN', redirect: '/admin.html' });
       if (loginRateLimited(req)) return sendJson(res, 429, { error: 'ログイン失敗が多すぎます。15分後に再試行してください' });
