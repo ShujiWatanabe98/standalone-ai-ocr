@@ -12,6 +12,7 @@
     "node": ">=18"
   },
   "dependencies": {
+    "pdfjs-dist": "^5.4.149",
     "pg": "^8.22.0"
   }
 }

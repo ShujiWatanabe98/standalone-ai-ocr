@@ -412,7 +412,7 @@ async function serveStatic(urlPath, res) {
   const target = path.resolve(publicDir, relative);
   if (!target.startsWith(publicDir) || !existsSync(target)) return false;
   const ext = path.extname(target).toLowerCase();
-  const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' };
+  const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' };
   res.writeHead(200, { 'Content-Type': types[ext] || 'application/octet-stream', 'X-Content-Type-Options': 'nosniff', 'Cache-Control': ext === '.html' ? 'no-store' : 'public, max-age=300' });
   createReadStream(target).pipe(res); return true;
 }
@@ -515,6 +515,18 @@ const server = http.createServer(async (req, res) => {
       const patientId = safeText(url.searchParams.get('patientId'));
       const jobs = db.jobs.filter(j => j.tenantId === identity.tenantId && (!patientId || j.patientId === patientId)).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map(jobView);
       return sendJson(res, 200, jobs);
+    }
+    if (req.method === 'DELETE' && url.pathname === '/api/jobs') {
+      const jobsToDelete = db.jobs.filter(job => job.tenantId === identity.tenantId);
+      for (const job of jobsToDelete) {
+        activeOcrControllers.get(job.id)?.abort(new Error('OCR history deleted by user'));
+        activeOcrControllers.delete(job.id);
+        await deleteImage(job.imageFile);
+      }
+      const deletedIds = new Set(jobsToDelete.map(job => job.id));
+      db.jobs = db.jobs.filter(job => !deletedIds.has(job.id));
+      await persist();
+      return sendJson(res, 200, { ok: true, deletedCount: jobsToDelete.length });
     }
     if (req.method === 'POST' && url.pathname === '/api/jobs') {
       const body = await readJson(req); const patient = db.patients.find(p => p.tenantId === identity.tenantId && p.id === body.patientId);
