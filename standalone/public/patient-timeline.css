@@ -173,6 +173,17 @@
   gap: 8px;
 }
 
+.summary-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.summary-title-row h3 {
+  margin: 0;
+}
+
 .patient-sheets-panel,
 #patientSheetTimeline {
   scroll-margin-top: 20px;
