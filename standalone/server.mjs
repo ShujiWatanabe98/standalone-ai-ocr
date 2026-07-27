@@ -306,11 +306,13 @@ function jobView(job) {
     ...result,
     documentType: String(result.documentType ?? '').replace(/[_＿]+/g, ''),
     notes: String(result.notes ?? '').replace(/[_＿]+/g, ''),
-    fields: (result.fields || []).map(field => ({
+    fields: (result.fields || [])
+      .filter(field => !/_TEXT_\d+$/i.test(String(field.id || '')))
+      .map(field => ({
       ...field,
       label: String(field.label ?? '').replace(/[_＿]+/g, ''),
       value: String(field.value ?? '').replace(/[_＿]+/g, ''),
-    })),
+      })),
   } : result;
   return { ...job, result: cleanResult(job.result), confirmedResult: cleanResult(job.confirmedResult), careStage, hasExistingDischarge, patientName: patient?.name || '削除済み患者', imageUrl: `/api/jobs/${job.id}/image` };
 }
@@ -717,7 +719,7 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || `${host}:${port}`}`);
   try {
     if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && !sameOrigin(req)) return sendJson(res, 403, { error: '不正な送信元です' });
-    if (req.method === 'GET' && url.pathname === '/api/health') return sendJson(res, 200, { ok: true, product: 'Standalone AI OCR', release: '2026-07-27-ocr-item-labels-1', model, imageDetail, apiKeyConfigured: Boolean(process.env.OPENAI_API_KEY) });
+    if (req.method === 'GET' && url.pathname === '/api/health') return sendJson(res, 200, { ok: true, product: 'Standalone AI OCR', release: '2026-07-28-item-list-only-1', model, imageDetail, apiKeyConfigured: Boolean(process.env.OPENAI_API_KEY) });
     if (req.method === 'POST' && url.pathname === '/api/auth/login') {
       if ((!authUser || !authPassword) && db.hospitals.length === 0) return sendJson(res, 200, { ok: true, userId: 'local-user', tenantId: facilityId, role: 'ADMIN', redirect: '/admin.html' });
       if (loginRateLimited(req)) return sendJson(res, 429, { error: 'ログイン失敗が多すぎます。15分後に再試行してください' });
