@@ -40,7 +40,6 @@
     <section class="camera-shell">
       <header class="camera-header">
         <div><h2 id="cameraTitle">A4用紙を撮影</h2><p id="cameraStatus">A4用紙を枠内に合わせてください</p></div>
-        <button id="closeCameraButton" class="camera-close-button" type="button" aria-label="カメラを閉じる">×</button>
       </header>
       <div class="camera-viewport">
         <video id="cameraVideo" autoplay playsinline muted></video>
@@ -53,6 +52,7 @@
       </div>
       <canvas id="cameraCanvas" hidden></canvas>
       <div class="camera-actions">
+        <button id="closeCameraButton" class="camera-close-button" type="button" aria-label="カメラを閉じる">×</button>
         <button id="retakeCameraButton" class="secondary" type="button" hidden>撮り直す</button>
         <button id="shootCameraButton" class="primary camera-shutter" type="button">撮影</button>
         <button id="useCameraButton" class="primary" type="button" hidden>この画像を使用</button>
@@ -60,6 +60,6 @@
     </section>
   </dialog>
   <script type="module" src="/app.js?v=20260728-bit-page1-y-regression-1"></script>
-  <script type="module" src="/camera-capture.js?v=20260728-sheet-name-only-1"></script>
+  <script type="module" src="/camera-capture.js?v=20260728-close-left-of-shutter-1"></script>
 </body>
 </html>

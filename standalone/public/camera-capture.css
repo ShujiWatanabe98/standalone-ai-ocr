@@ -156,6 +156,14 @@ body:has(.camera-dialog[open]) {
   min-height: 48px;
 }
 
+.camera-actions .camera-close-button {
+  width: 52px;
+  min-width: 52px;
+  height: 52px;
+  min-height: 52px;
+  flex: 0 0 52px;
+}
+
 .camera-shutter {
   width: 64px;
   min-width: 64px !important;
