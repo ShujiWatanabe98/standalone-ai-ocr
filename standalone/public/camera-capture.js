@@ -97,7 +97,7 @@ async function detectEvaluationSheet(imageSource, { live = false } = {}) {
     if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
     if (controller.signal.aborted) return;
     if (result.recognized) {
-      showSheetOverlay(`認識した評価シート：${result.displayName}`, 'recognized');
+      showSheetOverlay(result.displayName, 'recognized');
       status.textContent = `評価シート：${result.displayName}`;
     } else {
       showSheetOverlay('評価シートを認識できません', 'unknown');

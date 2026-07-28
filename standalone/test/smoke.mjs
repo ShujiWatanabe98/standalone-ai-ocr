@@ -49,11 +49,11 @@ assert.match(serverSource, /testType === 'FMA_1' && filledFieldCount\(ocr\.resul
 assert.match(captureHtml, /id="cameraSheetOverlay"/);
 assert.match(cameraApp, /\/api\/detect-sheet/);
 assert.match(cameraApp, /評価シートを判定中/);
-assert.match(cameraApp, /showSheetOverlay\(`認識した評価シート：\$\{result\.displayName\}`,\s*'recognized'\)/);
+assert.match(cameraApp, /showSheetOverlay\(result\.displayName,\s*'recognized'\)/);
+assert.doesNotMatch(cameraApp, /認識した評価シート：/);
 assert.match(cameraApp, /function liveFrameDataUrl\(\)/);
 assert.match(cameraApp, /function startLiveDetection\(\)/);
 assert.match(cameraApp, /scheduleLiveDetection\(2000\)/);
-assert.match(cameraApp, /認識した評価シート：\$\{result\.displayName\}/);
 assert.match(cameraApp, /detectEvaluationSheet\(imageDataUrl,\s*\{\s*live:\s*true\s*\}\)/);
 assert.match(cameraApp, /stopLiveDetection\(\);\s*canvas\.width/);
 assert.match(cameraApp, /await video\.play\(\);\s*startLiveDetection\(\)/);
