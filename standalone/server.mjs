@@ -361,6 +361,14 @@ const sheetDisplayNames = {
   WMSR_ALL: 'WMS-R（ウェクスラー記憶検査）',
 };
 
+const sheetPageRanges = {
+  SLTA_ALL: 12,
+  BIT: 7,
+  CAT_R_ALL: 5,
+  WAIS_IV_ALL: 13,
+  WMSR_ALL: 9,
+};
+
 async function detectEvaluationSheet(apiKey, imageUrl) {
   const prompt = `あなたはリハビリテーション評価シートの画像分類器です。
 画像に写っている用紙の印刷タイトル、項目名、表レイアウト、ページ番号から帳票を判定してください。
@@ -369,7 +377,16 @@ async function detectEvaluationSheet(apiKey, imageUrl) {
 testTypeは次のいずれかだけを返してください:
 FMA_1, FMA_2, BBS, KOHS_1, STEF, SLTA_ALL, BIT, CAT_R_ALL, WAIS_IV_ALL, WMSR_ALL, UNSUPPORTED
 
-pageは用紙に明記されたページ番号を整数で返し、不明ならnullにしてください。
+複数ページ帳票は、表紙や1ページ目だけでなく次の全ページを認識対象にしてください:
+- SLTA_ALL: 1〜12ページ
+- BIT: 1〜7ページ
+- CAT_R_ALL: 1〜5ページ
+- WAIS_IV_ALL: 1〜13ページ
+- WMSR_ALL: 1〜9ページ
+
+2枚目・3枚目以降では帳票タイトルが省略される場合があります。その場合も、ページ固有の印刷見出し、検査項目名、表の列構成、フッターのページ番号を組み合わせて同じ帳票として判定してください。
+pageは帳票内のページ番号です。設問番号、採点番号、患者の手書き数字をページ番号として扱わないでください。
+印刷ページ番号が見える場合はそれを優先し、見えない場合はページ固有のレイアウトから推定してください。単票またはページを特定できない場合はnullにしてください。
 confidenceは0から1です。断定できない場合はUNSUPPORTEDにしてください。
 JSON以外を返さないでください。
 {"testType":"BBS","page":null,"confidence":0.95}`;
@@ -391,7 +408,8 @@ JSON以外を返さないでください。
   const testType = Object.hasOwn(sheetDisplayNames, parsed.testType) ? parsed.testType : 'UNSUPPORTED';
   const confidence = Math.max(0, Math.min(1, Number(parsed.confidence) || 0));
   const rawPage = Number(parsed.page);
-  const page = Number.isInteger(rawPage) && rawPage >= 1 && rawPage <= 99 ? rawPage : null;
+  const maxPage = sheetPageRanges[testType] || null;
+  const page = maxPage && Number.isInteger(rawPage) && rawPage >= 1 && rawPage <= maxPage ? rawPage : null;
   const recognized = testType !== 'UNSUPPORTED' && confidence >= 0.55;
   const baseName = recognized ? sheetDisplayNames[testType] : null;
   return {
@@ -859,7 +877,7 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || `${host}:${port}`}`);
   try {
     if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && !sameOrigin(req)) return sendJson(res, 403, { error: '不正な送信元です' });
-    if (req.method === 'GET' && url.pathname === '/api/health') return sendJson(res, 200, { ok: true, product: 'Standalone AI OCR', release: '2026-07-28-camera-sheet-overlay-1', model, reasoningEffort, retryReasoningEffort, imageDetail, apiKeyConfigured: Boolean(process.env.OPENAI_API_KEY) });
+    if (req.method === 'GET' && url.pathname === '/api/health') return sendJson(res, 200, { ok: true, product: 'Standalone AI OCR', release: '2026-07-28-all-sheet-pages-detection-1', model, reasoningEffort, retryReasoningEffort, imageDetail, apiKeyConfigured: Boolean(process.env.OPENAI_API_KEY) });
     if (req.method === 'POST' && url.pathname === '/api/auth/login') {
       if ((!authUser || !authPassword) && db.hospitals.length === 0) return sendJson(res, 200, { ok: true, userId: 'local-user', tenantId: facilityId, role: 'ADMIN', redirect: '/admin.html' });
       if (loginRateLimited(req)) return sendJson(res, 429, { error: 'ログイン失敗が多すぎます。15分後に再試行してください' });
