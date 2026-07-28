@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
 import pg from 'pg';
-import { applyKnownSltaLabels, buildBbsRetryPrompt, buildBitRetryPrompt, buildFmaLowerRetryPrompt, buildFmaUpperRetryPrompt, buildRehainfoOcrPrompt, buildSltaProblemResponseRetryPrompt, buildStefRetryPrompt, normalizeRehainfoResult } from './rehainfo-ocr-definitions.mjs';
+import { applyKnownSltaLabels, buildBbsRetryPrompt, buildBitPage1Prompt, buildBitPage2Prompt, buildBitRetryPrompt, buildFmaLowerRetryPrompt, buildFmaUpperRetryPrompt, buildRehainfoOcrPrompt, buildRoutedOcrPrompt, buildSltaProblemResponseRetryPrompt, buildStefRetryPrompt, buildTargetedRetryPrompt, inferOcrRoute, normalizeRehainfoResult } from './rehainfo-ocr-definitions.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const localEnvFile = path.resolve(here, '..', 'standalone-ai-ocr.local.env');
@@ -25,8 +25,10 @@ const backupDir = path.resolve(process.env.AIOCR_BACKUP_DIR || path.join(here, '
 const port = Number(process.env.AIOCR_PORT || process.env.PORT || 8795);
 const host = process.env.AIOCR_HOST || '127.0.0.1';
 const model = process.env.OPENAI_MODEL || 'gpt-5.6-sol';
-const requestedImageDetail = String(process.env.OPENAI_IMAGE_DETAIL || 'high').toLowerCase();
-const imageDetail = ['low', 'high', 'original', 'auto'].includes(requestedImageDetail) ? requestedImageDetail : 'high';
+const reasoningEffort = process.env.OPENAI_REASONING_EFFORT || 'low';
+const retryReasoningEffort = process.env.OPENAI_RETRY_REASONING_EFFORT || 'high';
+const requestedImageDetail = String(process.env.OPENAI_IMAGE_DETAIL || 'original').toLowerCase();
+const imageDetail = ['low', 'high', 'original', 'auto'].includes(requestedImageDetail) ? requestedImageDetail : 'original';
 const authUser = process.env.AIOCR_USERNAME || '';
 const authPassword = process.env.AIOCR_PASSWORD || '';
 const facilityId = process.env.AIOCR_FACILITY_ID || 'local-facility';
@@ -96,12 +98,23 @@ function evaluationPageKey(job) {
     const numbers = (job.result.fields || []).map(field => /^#(\d+)$/.exec(String(field.id || ''))).filter(Boolean).map(match => Number(match[1]));
     return numbers.length ? `SLTA_${Math.min(...numbers)}_${Math.max(...numbers)}` : null;
   }
+  const pagePatterns = {
+    CAT_R_ALL: /^CAT_R_([1-5])_/,
+    WAIS_IV_ALL: /^WAIS_IV_((?:[1-9]|1[0-3]))_/,
+    WMSR_ALL: /^WMSR_([1-9])_/,
+  };
+  const pattern = pagePatterns[job?.result?.testType];
+  if (pattern) {
+    const match = (job.result.fields || []).map(field => pattern.exec(String(field.id || ''))).find(Boolean);
+    return match ? `${job.result.testType}_${match[1]}` : null;
+  }
   return null;
 }
 function rebuildAssessmentGroups() {
   let changed = 0;
   const grouped = new Map();
-  for (const job of db.jobs.filter(candidate => ['BIT', 'SLTA_ALL'].includes(candidate.result?.testType)).sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
+  const groupedTypes = ['BIT', 'SLTA_ALL', 'CAT_R_ALL', 'WAIS_IV_ALL', 'WMSR_ALL'];
+  for (const job of db.jobs.filter(candidate => groupedTypes.includes(candidate.result?.testType)).sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
     const key = `${job.tenantId}|${job.patientId}|${job.result.testType}`;
     const pageKey = evaluationPageKey(job);
     let state = grouped.get(key);
@@ -369,7 +382,7 @@ JSON以外を返さない。すべてのキーを必ず返す。
   const response = await fetch('https://api.openai.com/v1/responses', {
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model, input: [{ role: 'user', content: [{ type: 'input_text', text: prompt }, { type: 'input_image', image_url: imageUrl, detail: imageDetail }] }] }),
+    body: JSON.stringify({ model, reasoning: { effort: reasoningEffort }, input: [{ role: 'user', content: [{ type: 'input_text', text: prompt }, { type: 'input_image', image_url: imageUrl, detail: imageDetail }] }] }),
     signal: AbortSignal.timeout(120000),
   });
   const payload = await response.json();
@@ -385,7 +398,7 @@ JSON以外を返さない。すべてのキーを必ず返す。
   return { needsCorrection: Boolean(parsed.needsCorrection) && confidence >= 0.65 && width >= 35 && height >= 35, confidence, rotationDegrees: Math.max(-45, Math.min(45, Number(parsed.rotationDegrees) || 0)), reason: safeText(parsed.reason, 300), corners, enhancements, responseId: safeText(payload.id, 120) };
 }
 
-async function requestOcr(apiKey, imageUrl, prompt, externalSignal) {
+async function requestOcr(apiKey, imageUrl, prompt, externalSignal, options = {}) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(new Error('OCR request timed out')), 120000);
   timeout.unref?.();
@@ -393,16 +406,40 @@ async function requestOcr(apiKey, imageUrl, prompt, externalSignal) {
   if (externalSignal?.aborted) relayAbort();
   else externalSignal?.addEventListener('abort', relayAbort, { once: true });
   try {
-    const response = await fetch('https://api.openai.com/v1/responses', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model, input: [{ role: 'user', content: [{ type: 'input_text', text: prompt }, { type: 'input_image', image_url: imageUrl, detail: imageDetail }] }] }),
-      signal: controller.signal,
+    const requestBody = JSON.stringify({
+      model,
+      store: false,
+      reasoning: { effort: options.effort || reasoningEffort },
+      prompt_cache_key: `rehainfo-ocr-${options.routeKey || 'generic'}-v1`,
+      input: [{ role: 'user', content: [{ type: 'input_text', text: prompt }, { type: 'input_image', image_url: imageUrl, detail: options.detail || imageDetail }] }],
     });
-    const payload = await response.json();
-    if (!response.ok) throw new Error(payload?.error?.message || `OpenAI API error ${response.status}`);
-    const outputText = extractOutputText(payload);
-    return { result: parseModelJson(outputText), responseId: safeText(payload.id, 120), outputText: safeText(outputText, 12000) };
+    let lastError;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const response = await fetch('https://api.openai.com/v1/responses', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+          body: requestBody,
+          signal: controller.signal,
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+          const message = payload?.error?.message || `OpenAI API error ${response.status}`;
+          const retryable = [408, 409, 429].includes(response.status) || response.status >= 500 || /An error occurred while processing/i.test(message);
+          if (!retryable || attempt === 2) throw new Error(message);
+          lastError = new Error(message);
+        } else {
+          const outputText = extractOutputText(payload);
+          return { result: parseModelJson(outputText), responseId: safeText(payload.id, 120), outputText: safeText(outputText, 12000) };
+        }
+      } catch (error) {
+        if (controller.signal.aborted) throw error;
+        lastError = error;
+        if (attempt === 2) throw error;
+      }
+      await new Promise(resolve => setTimeout(resolve, 800 * (2 ** attempt)));
+    }
+    throw lastError || new Error('OCR request failed');
   } finally {
     clearTimeout(timeout);
     externalSignal?.removeEventListener('abort', relayAbort);
@@ -540,7 +577,41 @@ function filledStefTimeCount(result) {
 
 function expectedBitFieldCount(result) {
   const pageMatch = (result?.fields || []).map(field => /^BIT_(\d)_/.exec(field.id)).find(Boolean);
-  return ({ 3: 9, 5: 9, 6: 12, 7: 2 })[pageMatch?.[1]] || 1;
+  return ({ 1: 32, 2: 29, 3: 9, 5: 9, 6: 12, 7: 2 })[pageMatch?.[1]] || 1;
+}
+
+function bitPromptForPage(page) {
+  if (Number(page) === 1) return buildBitPage1Prompt();
+  if (Number(page) === 2) return buildBitPage2Prompt();
+  return buildBitRetryPrompt();
+}
+
+function ocrIssueIds(result) {
+  const fields = result?.fields || [];
+  const expected = { FMA_1: 33, FMA_2: 17, BBS: 14, STEF: 20 }[result?.testType];
+  const issues = fields
+    .filter(field => String(field.value ?? '').trim() === '' || (Number.isFinite(field.confidence) && field.confidence < 0.82))
+    .map(field => field.id);
+  if (expected && fields.length >= expected && filledFieldCount(result) === expected && !issues.length) return [];
+  if (result?.testType === 'BIT' && filledFieldCount(result) >= expectedBitFieldCount(result) && !issues.length) return [];
+  return issues.slice(0, 80);
+}
+
+function mergeOcrResults(original, retry) {
+  if (!retry || retry.testType !== original.testType) return original;
+  const retried = new Map((retry.fields || []).map(field => [field.id, field]));
+  return {
+    ...original,
+    evaluationDate: retry.evaluationDate || original.evaluationDate,
+    fields: original.fields.map(field => {
+      const candidate = retried.get(field.id);
+      if (!candidate || !String(candidate.value ?? '').trim()) return field;
+      const oldConfidence = Number(field.confidence) || 0;
+      const newConfidence = Number(candidate.confidence) || 0;
+      return !String(field.value ?? '').trim() || newConfidence >= oldConfidence ? candidate : field;
+    }),
+    notes: [original.notes, retry.notes].filter(Boolean).join(' / '),
+  };
 }
 
 async function runOcr(jobId) {
@@ -559,11 +630,13 @@ async function runOcr(jobId) {
     const attempts = [];
     let fmaLowerSpecializedAttempted = false;
     let fmaUpperSpecializedAttempted = false;
-    let ocr = await requestOcr(apiKey, imageUrl, buildRehainfoOcrPrompt(), controller.signal);
-    attempts.push({ responseId: ocr.responseId, filledFieldCount: filledFieldCount(ocr.result), output: ocr.outputText });
+    const route = job.ocrRoute?.testType ? job.ocrRoute : inferOcrRoute(job.sourceFileName, job.pageNumber);
+    const initialPrompt = route.testType ? buildRoutedOcrPrompt(route.testType, route.page) : buildRehainfoOcrPrompt();
+    let ocr = await requestOcr(apiKey, imageUrl, initialPrompt, controller.signal, { effort: reasoningEffort, routeKey: `${route.testType || 'generic'}-${route.page || 0}` });
+    attempts.push({ responseId: ocr.responseId, stage: route.testType ? 'routed-fast' : 'generic-fast', effort: reasoningEffort, filledFieldCount: filledFieldCount(ocr.result), output: ocr.outputText });
     if (ocr.result.testType === 'UNSUPPORTED') {
       await persist();
-      const bitClassificationRetry = await requestOcr(apiKey, imageUrl, buildBitRetryPrompt(), controller.signal);
+      const bitClassificationRetry = await requestOcr(apiKey, imageUrl, bitPromptForPage(job.ocrRoute?.page), controller.signal);
       attempts.push({ responseId: bitClassificationRetry.responseId, filledFieldCount: filledFieldCount(bitClassificationRetry.result), output: bitClassificationRetry.outputText });
       if (bitClassificationRetry.result.testType === 'BIT' && filledFieldCount(bitClassificationRetry.result) > 0) ocr = bitClassificationRetry;
     }
@@ -574,7 +647,7 @@ async function runOcr(jobId) {
       attempts.push({ responseId: fmaLowerClassificationRetry.responseId, filledFieldCount: filledFieldCount(fmaLowerClassificationRetry.result), output: fmaLowerClassificationRetry.outputText });
       if (fmaLowerClassificationRetry.result.testType === 'FMA_2' && filledFieldCount(fmaLowerClassificationRetry.result) > 0) ocr = fmaLowerClassificationRetry;
     }
-    if (ocr.result.testType === 'FMA_1' && !fmaUpperSpecializedAttempted) {
+    if (ocr.result.testType === 'FMA_1' && filledFieldCount(ocr.result) < 33 && !fmaUpperSpecializedAttempted) {
       await persist();
       const fmaUpperRetry = await requestOcr(apiKey, imageUrl, buildFmaUpperRetryPrompt(), controller.signal);
       fmaUpperSpecializedAttempted = true;
@@ -611,7 +684,7 @@ async function runOcr(jobId) {
         };
       }
     }
-    if (ocr.result.testType === 'BBS') {
+    if (ocr.result.testType === 'BBS' && filledFieldCount(ocr.result) < 14) {
       await persist();
       const bbsRetry = await requestOcr(apiKey, imageUrl, buildBbsRetryPrompt(), controller.signal);
       attempts.push({ responseId: bbsRetry.responseId, filledFieldCount: filledFieldCount(bbsRetry.result), output: bbsRetry.outputText });
@@ -629,7 +702,7 @@ async function runOcr(jobId) {
         };
       }
     }
-    if (ocr.result.testType === 'STEF') {
+    if (ocr.result.testType === 'STEF' && filledStefTimeCount(ocr.result) < 20) {
       await persist();
       const stefRetry = await requestOcr(apiKey, imageUrl, buildStefRetryPrompt(), controller.signal);
       attempts.push({ responseId: stefRetry.responseId, filledFieldCount: filledFieldCount(stefRetry.result), output: stefRetry.outputText });
@@ -649,7 +722,7 @@ async function runOcr(jobId) {
         },
       };
     }
-    if (ocr.result.testType === 'SLTA_ALL') {
+    if (ocr.result.testType === 'SLTA_ALL' && !ocr.result.fields.some(field => /^SLTA_(?:[1-9]|1[0-2])_TEXT_\d+$/.test(field.id) && field.value)) {
       await persist();
       const sltaProblemResponseRetry = await requestOcr(apiKey, imageUrl, buildSltaProblemResponseRetryPrompt(ocr.result.fields), controller.signal);
       attempts.push({ responseId: sltaProblemResponseRetry.responseId, filledFieldCount: filledFieldCount(sltaProblemResponseRetry.result), output: sltaProblemResponseRetry.outputText });
@@ -678,9 +751,21 @@ async function runOcr(jobId) {
     }
     if (ocr.result.testType === 'BIT' && filledFieldCount(ocr.result) < expectedBitFieldCount(ocr.result)) {
       await persist();
-      const bitRetry = await requestOcr(apiKey, imageUrl, buildBitRetryPrompt(), controller.signal);
+      const bitPage = Number(/^BIT_(\d)_/.exec(ocr.result.fields?.[0]?.id || '')?.[1]) || job.ocrRoute?.page;
+      const bitRetry = await requestOcr(apiKey, imageUrl, bitPromptForPage(bitPage), controller.signal);
       attempts.push({ responseId: bitRetry.responseId, filledFieldCount: filledFieldCount(bitRetry.result), output: bitRetry.outputText });
       if (filledFieldCount(bitRetry.result) > filledFieldCount(ocr.result)) ocr = bitRetry;
+    }
+    const issueIds = ocrIssueIds(ocr.result);
+    if (issueIds.length) {
+      await persist();
+      const targetedRetry = await requestOcr(apiKey, imageUrl, buildTargetedRetryPrompt(ocr.result, issueIds), controller.signal, {
+        effort: retryReasoningEffort,
+        detail: 'original',
+        routeKey: `${ocr.result.testType}-targeted`,
+      });
+      attempts.push({ responseId: targetedRetry.responseId, stage: 'targeted-high-accuracy', effort: retryReasoningEffort, issueCount: issueIds.length, filledFieldCount: filledFieldCount(targetedRetry.result), output: targetedRetry.outputText });
+      ocr = { ...ocr, responseId: targetedRetry.responseId, result: mergeOcrResults(ocr.result, targetedRetry.result) };
     }
     job.result = applyKnownSltaLabels(ocr.result);
     job.evaluationType = job.result.documentType || '帳票名不明';
@@ -719,7 +804,7 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || `${host}:${port}`}`);
   try {
     if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && !sameOrigin(req)) return sendJson(res, 403, { error: '不正な送信元です' });
-    if (req.method === 'GET' && url.pathname === '/api/health') return sendJson(res, 200, { ok: true, product: 'Standalone AI OCR', release: '2026-07-28-item-list-only-1', model, imageDetail, apiKeyConfigured: Boolean(process.env.OPENAI_API_KEY) });
+    if (req.method === 'GET' && url.pathname === '/api/health') return sendJson(res, 200, { ok: true, product: 'Standalone AI OCR', release: '2026-07-28-adaptive-fast-ocr-1', model, reasoningEffort, retryReasoningEffort, imageDetail, apiKeyConfigured: Boolean(process.env.OPENAI_API_KEY) });
     if (req.method === 'POST' && url.pathname === '/api/auth/login') {
       if ((!authUser || !authPassword) && db.hospitals.length === 0) return sendJson(res, 200, { ok: true, userId: 'local-user', tenantId: facilityId, role: 'ADMIN', redirect: '/admin.html' });
       if (loginRateLimited(req)) return sendJson(res, 429, { error: 'ログイン失敗が多すぎます。15分後に再試行してください' });
@@ -831,7 +916,10 @@ const server = http.createServer(async (req, res) => {
       if (!patient) return sendJson(res, 400, { error: '患者を選択してください' });
       const image = parseDataUrl(body.imageDataUrl); const jobId = id('ocr'); const ext = image.mime === 'image/png' ? '.png' : image.mime === 'image/webp' ? '.webp' : '.jpg';
       const imageFile = `${jobId}${ext}`; await writeImage(imageFile, image.bytes);
-      const job = { id: jobId, tenantId: identity.tenantId, patientId: patient.id, evaluationType: '帳票判定中', status: 'REQUEST', imageFile, imageType: image.mime, result: null, confirmedResult: null, error: null, createdAt: now(), updatedAt: now(), confirmedAt: null };
+      const sourceFileName = safeText(body.fileName, 240);
+      const pageNumber = Math.max(0, Math.min(99, Number(body.pageNumber) || 0)) || null;
+      const ocrRoute = inferOcrRoute(sourceFileName, pageNumber);
+      const job = { id: jobId, tenantId: identity.tenantId, patientId: patient.id, evaluationType: ocrRoute.testType ? '帳票確認中' : '帳票判定中', status: 'REQUEST', imageFile, imageType: image.mime, sourceFileName, pageNumber, ocrRoute, result: null, confirmedResult: null, error: null, createdAt: now(), updatedAt: now(), confirmedAt: null };
       db.jobs.push(job); await persist(); setImmediate(() => runOcr(job.id)); return sendJson(res, 202, jobView(job));
       }
       const jobMatch = /^\/api\/jobs\/([^/]+)$/.exec(url.pathname);
