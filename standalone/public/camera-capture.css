@@ -141,6 +141,7 @@ body:has(.camera-dialog[open]) {
 .camera-guide .bottom-right { right: -3px; bottom: -3px; border-width: 0 5px 5px 0; }
 
 .camera-actions {
+  position: relative;
   z-index: 3;
   display: flex;
   align-items: center;
@@ -157,11 +158,15 @@ body:has(.camera-dialog[open]) {
 }
 
 .camera-actions .camera-close-button {
+  position: absolute;
+  left: 18px;
+  top: 50%;
   width: 52px;
   min-width: 52px;
   height: 52px;
   min-height: 52px;
   flex: 0 0 52px;
+  transform: translateY(-50%);
 }
 
 .camera-shutter {

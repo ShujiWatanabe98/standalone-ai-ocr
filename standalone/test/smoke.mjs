@@ -65,6 +65,8 @@ assert.doesNotMatch(captureHtml, /camera-guide-label/);
 assert.match(captureHtml, /class="camera-actions">\s*<button id="closeCameraButton"[\s\S]*?<button id="shootCameraButton"/);
 assert.doesNotMatch(captureHtml, /camera-header[\s\S]*?id="closeCameraButton"[\s\S]*?<\/header>/);
 assert.match(cameraCss, /\.camera-actions \.camera-close-button/);
+assert.match(cameraCss, /\.camera-actions\s*\{\s*position:\s*relative/);
+assert.match(cameraCss, /\.camera-actions \.camera-close-button\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?left:\s*18px;[\s\S]*?top:\s*50%/);
 assert.match(serverSource, /async function detectEvaluationSheet/);
 assert.match(serverSource, /rehainfo-sheet-detection-v1/);
 assert.match(serverSource, /url\.pathname === '\/api\/detect-sheet'/);
