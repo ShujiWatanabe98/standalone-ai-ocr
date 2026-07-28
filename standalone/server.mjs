@@ -348,6 +348,61 @@ function parsePlainModelJson(text) {
   return JSON.parse(clean);
 }
 
+const sheetDisplayNames = {
+  FMA_1: 'Fugl-Meyer Assessment（FMA）上肢',
+  FMA_2: 'Fugl-Meyer Assessment（FMA）下肢',
+  BBS: 'Berg Balance Scale（BBS）',
+  KOHS_1: 'コース立方体組み合わせテスト',
+  STEF: 'STEF（簡易上肢機能検査）',
+  SLTA_ALL: 'SLTA（標準失語症検査）',
+  BIT: 'BIT（行動性無視検査）',
+  CAT_R_ALL: 'CAT-R',
+  WAIS_IV_ALL: 'WAIS-IV（ウェクスラー成人知能検査）',
+  WMSR_ALL: 'WMS-R（ウェクスラー記憶検査）',
+};
+
+async function detectEvaluationSheet(apiKey, imageUrl) {
+  const prompt = `あなたはリハビリテーション評価シートの画像分類器です。
+画像に写っている用紙の印刷タイトル、項目名、表レイアウト、ページ番号から帳票を判定してください。
+患者の手書き内容や個人情報は出力しないでください。
+
+testTypeは次のいずれかだけを返してください:
+FMA_1, FMA_2, BBS, KOHS_1, STEF, SLTA_ALL, BIT, CAT_R_ALL, WAIS_IV_ALL, WMSR_ALL, UNSUPPORTED
+
+pageは用紙に明記されたページ番号を整数で返し、不明ならnullにしてください。
+confidenceは0から1です。断定できない場合はUNSUPPORTEDにしてください。
+JSON以外を返さないでください。
+{"testType":"BBS","page":null,"confidence":0.95}`;
+  const response = await fetch('https://api.openai.com/v1/responses', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model,
+      store: false,
+      reasoning: { effort: 'low' },
+      prompt_cache_key: 'rehainfo-sheet-detection-v1',
+      input: [{ role: 'user', content: [{ type: 'input_text', text: prompt }, { type: 'input_image', image_url: imageUrl, detail: 'low' }] }],
+    }),
+    signal: AbortSignal.timeout(45000),
+  });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload?.error?.message || `OpenAI API error ${response.status}`);
+  const parsed = parsePlainModelJson(extractOutputText(payload));
+  const testType = Object.hasOwn(sheetDisplayNames, parsed.testType) ? parsed.testType : 'UNSUPPORTED';
+  const confidence = Math.max(0, Math.min(1, Number(parsed.confidence) || 0));
+  const rawPage = Number(parsed.page);
+  const page = Number.isInteger(rawPage) && rawPage >= 1 && rawPage <= 99 ? rawPage : null;
+  const recognized = testType !== 'UNSUPPORTED' && confidence >= 0.55;
+  const baseName = recognized ? sheetDisplayNames[testType] : null;
+  return {
+    recognized,
+    testType,
+    page,
+    confidence,
+    displayName: recognized ? `${baseName}${page ? ` ${page}ページ` : ''}` : '評価シートを認識できません',
+  };
+}
+
 async function analyzeImageGeometry(apiKey, imageUrl) {
   const prompt = `# 役割
 あなたは、手書き数値を含むリハビリ評価シートをAI OCRしやすい画像へ変換するための、文書画像補正判定AIです。画像を生成・編集せず、後段の画像処理が使う補正パラメータだけをJSONで返します。
@@ -804,7 +859,7 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || `${host}:${port}`}`);
   try {
     if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && !sameOrigin(req)) return sendJson(res, 403, { error: '不正な送信元です' });
-    if (req.method === 'GET' && url.pathname === '/api/health') return sendJson(res, 200, { ok: true, product: 'Standalone AI OCR', release: '2026-07-28-adaptive-fast-ocr-1', model, reasoningEffort, retryReasoningEffort, imageDetail, apiKeyConfigured: Boolean(process.env.OPENAI_API_KEY) });
+    if (req.method === 'GET' && url.pathname === '/api/health') return sendJson(res, 200, { ok: true, product: 'Standalone AI OCR', release: '2026-07-28-camera-sheet-overlay-1', model, reasoningEffort, retryReasoningEffort, imageDetail, apiKeyConfigured: Boolean(process.env.OPENAI_API_KEY) });
     if (req.method === 'POST' && url.pathname === '/api/auth/login') {
       if ((!authUser || !authPassword) && db.hospitals.length === 0) return sendJson(res, 200, { ok: true, userId: 'local-user', tenantId: facilityId, role: 'ADMIN', redirect: '/admin.html' });
       if (loginRateLimited(req)) return sendJson(res, 429, { error: 'ログイン失敗が多すぎます。15分後に再試行してください' });
@@ -885,6 +940,14 @@ const server = http.createServer(async (req, res) => {
       const body = await readJson(req); parseDataUrl(body.imageDataUrl);
       const analysis = await analyzeImageGeometry(apiKey, body.imageDataUrl);
       await persist(); return sendJson(res, 200, analysis);
+    }
+    if (req.method === 'POST' && url.pathname === '/api/detect-sheet') {
+      const apiKey = process.env.OPENAI_API_KEY;
+      if (!apiKey) return sendJson(res, 503, { error: 'OPENAI_API_KEYが設定されていません' });
+      const body = await readJson(req);
+      parseDataUrl(body.imageDataUrl);
+      const detection = await detectEvaluationSheet(apiKey, body.imageDataUrl);
+      return sendJson(res, 200, detection);
     }
     if (req.method === 'GET' && url.pathname === '/api/patients') return sendJson(res, 200, db.patients.filter(p => p.tenantId === identity.tenantId).map(p => publicPatient(p, identity.tenantId)));
     if (req.method === 'POST' && url.pathname === '/api/patients') {

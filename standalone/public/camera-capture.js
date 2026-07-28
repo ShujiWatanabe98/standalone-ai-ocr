@@ -9,10 +9,69 @@ const preview = document.querySelector('#cameraPreview');
 const canvas = document.querySelector('#cameraCanvas');
 const status = document.querySelector('#cameraStatus');
 const imageInput = document.querySelector('#imageInput');
+const sheetOverlay = document.querySelector('#cameraSheetOverlay');
 
 let stream = null;
 let capturedBlob = null;
 let previewUrl = null;
+let detectionController = null;
+
+function showSheetOverlay(text, state = 'detecting') {
+  if (!sheetOverlay) return;
+  sheetOverlay.textContent = text;
+  sheetOverlay.dataset.state = state;
+  sheetOverlay.hidden = false;
+}
+
+function hideSheetOverlay() {
+  detectionController?.abort();
+  detectionController = null;
+  if (!sheetOverlay) return;
+  sheetOverlay.hidden = true;
+  sheetOverlay.textContent = '';
+  delete sheetOverlay.dataset.state;
+}
+
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error || new Error('撮影画像を読み込めませんでした。'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function detectEvaluationSheet(blob) {
+  detectionController?.abort();
+  const controller = new AbortController();
+  detectionController = controller;
+  showSheetOverlay('評価シートを判定中…', 'detecting');
+  try {
+    const imageDataUrl = await blobToDataUrl(blob);
+    const response = await fetch('/api/detect-sheet', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ imageDataUrl }),
+      signal: controller.signal
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+    if (controller.signal.aborted) return;
+    if (result.recognized) {
+      showSheetOverlay(result.displayName, 'recognized');
+      status.textContent = `評価シート：${result.displayName}`;
+    } else {
+      showSheetOverlay('評価シートを認識できません', 'unknown');
+      status.textContent = '用紙全体と帳票名が鮮明に写るように撮り直してください';
+    }
+  } catch (error) {
+    if (error.name === 'AbortError') return;
+    showSheetOverlay('評価シートの判定に失敗しました', 'error');
+    status.textContent = error.message;
+  } finally {
+    if (detectionController === controller) detectionController = null;
+  }
+}
 
 function setPreviewing(previewing) {
   cameraDialog.classList.toggle('previewing', previewing);
@@ -33,6 +92,7 @@ function stopCamera() {
 }
 
 function clearCapture() {
+  hideSheetOverlay();
   capturedBlob = null;
   if (previewUrl) URL.revokeObjectURL(previewUrl);
   previewUrl = null;
@@ -94,10 +154,12 @@ function captureFrame() {
     previewUrl = URL.createObjectURL(blob);
     preview.src = previewUrl;
     setPreviewing(true);
+    detectEvaluationSheet(blob);
   }, 'image/jpeg', 0.94);
 }
 
 function retake() {
+  hideSheetOverlay();
   capturedBlob = null;
   if (previewUrl) URL.revokeObjectURL(previewUrl);
   previewUrl = null;

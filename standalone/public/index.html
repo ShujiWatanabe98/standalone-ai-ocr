@@ -44,6 +44,7 @@
       </header>
       <div class="camera-viewport">
         <video id="cameraVideo" autoplay playsinline muted></video>
+        <div id="cameraSheetOverlay" class="camera-sheet-overlay" role="status" aria-live="polite" hidden></div>
         <img id="cameraPreview" alt="撮影したA4用紙のプレビュー">
         <div id="cameraGuide" class="camera-guide" aria-hidden="true">
           <span class="camera-guide-label">A4</span>
@@ -60,6 +61,6 @@
     </section>
   </dialog>
   <script type="module" src="/app.js?v=20260728-bit-page1-y-regression-1"></script>
-  <script type="module" src="/camera-capture.js?v=20260728-a4-guide-1"></script>
+  <script type="module" src="/camera-capture.js?v=20260728-sheet-name-overlay-1"></script>
 </body>
 </html>

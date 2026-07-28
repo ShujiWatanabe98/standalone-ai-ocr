@@ -181,6 +181,42 @@ body:has(.camera-dialog[open]) {
   color: transparent;
 }
 
+.camera-sheet-overlay {
+  position: absolute;
+  z-index: 4;
+  top: 18px;
+  left: 50%;
+  max-width: calc(100% - 32px);
+  padding: 10px 18px;
+  transform: translateX(-50%);
+  border: 2px solid #ffffffb8;
+  border-radius: 999px;
+  background: #081014e8;
+  color: #fff;
+  box-shadow: 0 4px 18px #0008;
+  font-size: clamp(15px, 2.8vw, 22px);
+  font-weight: 800;
+  line-height: 1.25;
+  text-align: center;
+  pointer-events: none;
+}
+
+.camera-sheet-overlay[data-state="detecting"] {
+  border-color: #8ecbff;
+  color: #d8efff;
+}
+
+.camera-sheet-overlay[data-state="recognized"] {
+  border-color: #5fffd2;
+  background: #07372fe8;
+}
+
+.camera-sheet-overlay[data-state="unknown"],
+.camera-sheet-overlay[data-state="error"] {
+  border-color: #ffb3a7;
+  background: #4b1714e8;
+}
+
 @media (orientation: landscape) and (max-height: 700px) {
   .camera-guide {
     width: min(54vw, calc(68vh * 297 / 210));
