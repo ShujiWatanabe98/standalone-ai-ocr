@@ -127,19 +127,6 @@ body:has(.camera-dialog[open]) {
   pointer-events: none;
 }
 
-.camera-guide-label {
-  position: absolute;
-  top: 8px;
-  left: 50%;
-  padding: 3px 9px;
-  transform: translateX(-50%);
-  border-radius: 999px;
-  background: #000a;
-  color: #fff;
-  font-size: 12px;
-  font-weight: 800;
-}
-
 .camera-guide .corner {
   position: absolute;
   width: 34px;
@@ -184,13 +171,15 @@ body:has(.camera-dialog[open]) {
 .camera-sheet-overlay {
   position: absolute;
   z-index: 4;
-  top: 18px;
+  top: 4px;
   left: 50%;
-  max-width: calc(100% - 32px);
-  padding: 10px 18px;
+  width: min(92vw, 840px);
+  max-width: calc(100% - 12px);
+  min-height: 46px;
+  padding: 10px 24px;
   transform: translateX(-50%);
   border: 2px solid #ffffffb8;
-  border-radius: 999px;
+  border-radius: 12px;
   background: #081014e8;
   color: #fff;
   box-shadow: 0 4px 18px #0008;
@@ -198,6 +187,7 @@ body:has(.camera-dialog[open]) {
   font-weight: 800;
   line-height: 1.25;
   text-align: center;
+  white-space: normal;
   pointer-events: none;
 }
 
