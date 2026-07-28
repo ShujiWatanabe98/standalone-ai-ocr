@@ -15,6 +15,8 @@ let stream = null;
 let capturedBlob = null;
 let previewUrl = null;
 let detectionController = null;
+let liveDetectionTimer = null;
+let liveDetectionActive = false;
 
 function showSheetOverlay(text, state = 'detecting') {
   if (!sheetOverlay) return;
@@ -24,8 +26,6 @@ function showSheetOverlay(text, state = 'detecting') {
 }
 
 function hideSheetOverlay() {
-  detectionController?.abort();
-  detectionController = null;
   if (!sheetOverlay) return;
   sheetOverlay.hidden = true;
   sheetOverlay.textContent = '';
@@ -41,13 +41,52 @@ function blobToDataUrl(blob) {
   });
 }
 
-async function detectEvaluationSheet(blob) {
+function liveFrameDataUrl() {
+  if (!video.videoWidth || !video.videoHeight) return null;
+  const maxLongEdge = 960;
+  const scale = Math.min(1, maxLongEdge / Math.max(video.videoWidth, video.videoHeight));
+  const liveCanvas = document.createElement('canvas');
+  liveCanvas.width = Math.max(1, Math.round(video.videoWidth * scale));
+  liveCanvas.height = Math.max(1, Math.round(video.videoHeight * scale));
+  liveCanvas.getContext('2d', { alpha: false }).drawImage(video, 0, 0, liveCanvas.width, liveCanvas.height);
+  return liveCanvas.toDataURL('image/jpeg', 0.72);
+}
+
+function stopLiveDetection() {
+  liveDetectionActive = false;
+  if (liveDetectionTimer) clearTimeout(liveDetectionTimer);
+  liveDetectionTimer = null;
+  detectionController?.abort();
+  detectionController = null;
+}
+
+function scheduleLiveDetection(delay = 600) {
+  if (!liveDetectionActive || !cameraDialog.open || !stream || cameraDialog.classList.contains('previewing')) return;
+  if (liveDetectionTimer) clearTimeout(liveDetectionTimer);
+  liveDetectionTimer = setTimeout(async () => {
+    liveDetectionTimer = null;
+    const imageDataUrl = liveFrameDataUrl();
+    if (imageDataUrl) await detectEvaluationSheet(imageDataUrl, { live: true });
+    if (liveDetectionActive) scheduleLiveDetection(3000);
+  }, delay);
+}
+
+function startLiveDetection() {
+  stopLiveDetection();
+  liveDetectionActive = true;
+  showSheetOverlay('評価シートを判定中…', 'detecting');
+  scheduleLiveDetection();
+}
+
+async function detectEvaluationSheet(imageSource, { live = false } = {}) {
   detectionController?.abort();
   const controller = new AbortController();
   detectionController = controller;
-  showSheetOverlay('評価シートを判定中…', 'detecting');
+  if (!live || sheetOverlay?.dataset.state !== 'recognized') {
+    showSheetOverlay('評価シートを判定中…', 'detecting');
+  }
   try {
-    const imageDataUrl = await blobToDataUrl(blob);
+    const imageDataUrl = typeof imageSource === 'string' ? imageSource : await blobToDataUrl(imageSource);
     const response = await fetch('/api/detect-sheet', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -62,7 +101,9 @@ async function detectEvaluationSheet(blob) {
       status.textContent = `評価シート：${result.displayName}`;
     } else {
       showSheetOverlay('評価シートを認識できません', 'unknown');
-      status.textContent = '用紙全体と帳票名が鮮明に写るように撮り直してください';
+      status.textContent = live
+        ? '用紙全体と帳票名が枠内に写るように調整してください'
+        : '用紙全体と帳票名が鮮明に写るように撮り直してください';
     }
   } catch (error) {
     if (error.name === 'AbortError') return;
@@ -84,6 +125,7 @@ function setPreviewing(previewing) {
 }
 
 function stopCamera() {
+  stopLiveDetection();
   if (stream) {
     stream.getTracks().forEach(track => track.stop());
     stream = null;
@@ -114,6 +156,7 @@ async function startCamera() {
   });
   video.srcObject = stream;
   await video.play();
+  startLiveDetection();
 }
 
 async function openCamera() {
@@ -122,7 +165,7 @@ async function openCamera() {
   status.textContent = 'カメラを起動しています…';
   try {
     await startCamera();
-    status.textContent = 'A4用紙を枠内に合わせてください';
+    status.textContent = '評価シートを枠内に合わせてください';
   } catch (error) {
     status.textContent = error.name === 'NotAllowedError'
       ? 'カメラの使用が許可されていません。ブラウザの権限設定を確認してください。'
@@ -140,6 +183,7 @@ function closeCamera() {
 
 function captureFrame() {
   if (!video.videoWidth || !video.videoHeight) return;
+  stopLiveDetection();
   canvas.width = video.videoWidth;
   canvas.height = video.videoHeight;
   const context = canvas.getContext('2d', { alpha: false });
@@ -147,6 +191,7 @@ function captureFrame() {
   canvas.toBlob(blob => {
     if (!blob) {
       status.textContent = '撮影画像を作成できませんでした。もう一度お試しください。';
+      startLiveDetection();
       return;
     }
     capturedBlob = blob;
@@ -159,12 +204,14 @@ function captureFrame() {
 }
 
 function retake() {
+  stopLiveDetection();
   hideSheetOverlay();
   capturedBlob = null;
   if (previewUrl) URL.revokeObjectURL(previewUrl);
   previewUrl = null;
   preview.removeAttribute('src');
   setPreviewing(false);
+  startLiveDetection();
 }
 
 function useCapture() {
@@ -191,5 +238,6 @@ cameraDialog?.addEventListener('cancel', event => {
   closeCamera();
 });
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden && cameraDialog?.open) stopCamera();
+  if (document.hidden && cameraDialog?.open) stopLiveDetection();
+  else if (!document.hidden && cameraDialog?.open && stream && !cameraDialog.classList.contains('previewing')) startLiveDetection();
 });
