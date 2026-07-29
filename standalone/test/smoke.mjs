@@ -76,6 +76,8 @@ assert.match(cameraCss, /\.camera-actions \.camera-close-button\s*\{[\s\S]*?posi
 assert.match(captureHtml, /id="cameraCaptureSlots"/);
 assert.match(captureHtml, /id="cameraCaptureCount"/);
 assert.match(captureHtml, /id="finishCameraButton"/);
+assert.match(captureHtml, /id="shootCameraButton"[\s\S]*?id="finishCameraButton"[\s\S]*?>画像を使用<\/button>/);
+assert.match(cameraCss, /\.camera-finish-button\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?right:\s*18px/);
 assert.match(cameraApp, /const maxCameraCaptures = 12/);
 assert.match(cameraApp, /Array\.from\(\{ length: maxCameraCaptures \}/);
 assert.match(cameraApp, /capturedSheets\.filter\(Boolean\)\.forEach\(item => transfer\.items\.add\(item\.file\)\)/);

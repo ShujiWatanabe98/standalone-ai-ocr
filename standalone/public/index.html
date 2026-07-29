@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="/styles.css?v=20260729-past-evaluation-1">
   <link rel="stylesheet" href="/capture-layout.css?v=20260729-remove-cache-clear-1">
   <link rel="stylesheet" href="/patient-timeline.css?v=20260729-rehab-record-delete-1">
-  <link rel="stylesheet" href="/camera-capture.css?v=20260729-active-capture-slot-1">
+  <link rel="stylesheet" href="/camera-capture.css?v=20260729-use-image-right-1">
 </head>
 <body>
   <header>
@@ -52,11 +52,11 @@
       <section class="camera-capture-sheet" aria-labelledby="cameraCaptureSheetTitle">
         <div class="camera-capture-sheet-head"><h3 id="cameraCaptureSheetTitle">撮影シート（最大12枚）</h3><strong id="cameraCaptureCount">0 / 12枚</strong></div>
         <div id="cameraCaptureSlots" class="camera-capture-slots"></div>
-        <button id="finishCameraButton" class="primary camera-finish-button" type="button" hidden>撮影した画像を使用</button>
       </section>
       <div class="camera-actions">
         <button id="closeCameraButton" class="camera-close-button" type="button" aria-label="カメラを閉じる">×</button>
         <button id="shootCameraButton" class="primary camera-shutter" type="button">撮影</button>
+        <button id="finishCameraButton" class="primary camera-finish-button" type="button" hidden>画像を使用</button>
       </div>
     </section>
   </dialog>

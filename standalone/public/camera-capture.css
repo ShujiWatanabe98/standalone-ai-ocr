@@ -343,9 +343,14 @@ body:has(.camera-dialog[open]) {
 }
 
 .camera-finish-button {
-  width: 100%;
-  min-height: 40px;
-  margin-top: 8px;
+  position: absolute;
+  top: 50%;
+  right: 18px;
+  width: auto;
+  min-width: 104px !important;
+  min-height: 48px;
+  margin: 0;
+  transform: translateY(-50%);
 }
 
 .camera-header {
