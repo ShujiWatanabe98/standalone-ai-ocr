@@ -45,7 +45,6 @@
       <div class="camera-viewport">
         <video id="cameraVideo" autoplay playsinline muted></video>
         <div id="cameraSheetOverlay" class="camera-sheet-overlay" role="status" aria-live="polite" hidden></div>
-        <img id="cameraPreview" alt="撮影したA4用紙のプレビュー">
         <div id="cameraGuide" class="camera-guide" aria-hidden="true">
           <i class="corner top-left"></i><i class="corner top-right"></i>
           <i class="corner bottom-left"></i><i class="corner bottom-right"></i>
@@ -59,13 +58,11 @@
       </section>
       <div class="camera-actions">
         <button id="closeCameraButton" class="camera-close-button" type="button" aria-label="カメラを閉じる">×</button>
-        <button id="retakeCameraButton" class="secondary" type="button" hidden>撮り直す</button>
         <button id="shootCameraButton" class="primary camera-shutter" type="button">撮影</button>
-        <button id="useCameraButton" class="primary" type="button" hidden>シートに追加</button>
       </div>
     </section>
   </dialog>
   <script type="module" src="/app.js?v=20260729-remove-cache-clear-1"></script>
-  <script type="module" src="/camera-capture.js?v=20260729-camera-12-sheet-1"></script>
+  <script type="module" src="/camera-capture.js?v=20260729-camera-auto-add-1"></script>
 </body>
 </html>

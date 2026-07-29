@@ -2,11 +2,8 @@ const cameraDialog = document.querySelector('#cameraDialog');
 const openButton = document.querySelector('#openCameraButton');
 const closeButton = document.querySelector('#closeCameraButton');
 const shootButton = document.querySelector('#shootCameraButton');
-const retakeButton = document.querySelector('#retakeCameraButton');
-const useButton = document.querySelector('#useCameraButton');
 const finishButton = document.querySelector('#finishCameraButton');
 const video = document.querySelector('#cameraVideo');
-const preview = document.querySelector('#cameraPreview');
 const canvas = document.querySelector('#cameraCanvas');
 const status = document.querySelector('#cameraStatus');
 const imageInput = document.querySelector('#imageInput');
@@ -15,8 +12,6 @@ const captureSlots = document.querySelector('#cameraCaptureSlots');
 const captureCount = document.querySelector('#cameraCaptureCount');
 
 let stream = null;
-let capturedBlob = null;
-let previewUrl = null;
 let capturedSheets = [];
 let detectionController = null;
 let liveDetectionTimer = null;
@@ -92,7 +87,7 @@ function stopLiveDetection() {
 }
 
 function scheduleLiveDetection(delay = 600) {
-  if (!liveDetectionActive || !cameraDialog.open || !stream || cameraDialog.classList.contains('previewing')) return;
+  if (!liveDetectionActive || !cameraDialog.open || !stream) return;
   if (liveDetectionTimer) clearTimeout(liveDetectionTimer);
   liveDetectionTimer = setTimeout(async () => {
     liveDetectionTimer = null;
@@ -145,16 +140,6 @@ async function detectEvaluationSheet(imageSource, { live = false } = {}) {
   }
 }
 
-function setPreviewing(previewing) {
-  cameraDialog.classList.toggle('previewing', previewing);
-  shootButton.hidden = previewing;
-  retakeButton.hidden = !previewing;
-  useButton.hidden = !previewing;
-  status.textContent = previewing
-    ? '用紙全体が鮮明に写っていることを確認してください'
-    : 'A4用紙を枠内に合わせてください';
-}
-
 function stopCamera() {
   stopLiveDetection();
   if (stream) {
@@ -166,11 +151,6 @@ function stopCamera() {
 
 function clearCapture() {
   hideSheetOverlay();
-  capturedBlob = null;
-  if (previewUrl) URL.revokeObjectURL(previewUrl);
-  previewUrl = null;
-  preview.removeAttribute('src');
-  setPreviewing(false);
 }
 
 async function startCamera() {
@@ -215,8 +195,9 @@ function closeCamera() {
 }
 
 function captureFrame() {
-  if (!video.videoWidth || !video.videoHeight) return;
+  if (!video.videoWidth || !video.videoHeight || capturedSheets.length >= maxCameraCaptures) return;
   stopLiveDetection();
+  shootButton.disabled = true;
   canvas.width = video.videoWidth;
   canvas.height = video.videoHeight;
   const context = canvas.getContext('2d', { alpha: false });
@@ -224,46 +205,25 @@ function captureFrame() {
   canvas.toBlob(blob => {
     if (!blob) {
       status.textContent = '撮影画像を作成できませんでした。もう一度お試しください。';
+      shootButton.disabled = false;
       startLiveDetection();
       return;
     }
-    capturedBlob = blob;
-    if (previewUrl) URL.revokeObjectURL(previewUrl);
-    previewUrl = URL.createObjectURL(blob);
-    preview.src = previewUrl;
-    setPreviewing(true);
-    detectEvaluationSheet(blob);
+    const file = new File(
+      [blob],
+      `a4-camera-${String(capturedSheets.length + 1).padStart(2, '0')}-${new Date().toISOString().replace(/[:.]/g, '-')}.jpg`,
+      { type: 'image/jpeg', lastModified: Date.now() }
+    );
+    capturedSheets.push({ file, url: URL.createObjectURL(blob) });
+    renderCaptureSheet();
+    if (capturedSheets.length >= maxCameraCaptures) {
+      status.textContent = '12枚撮影しました。「撮影した画像を使用」を押してください。';
+    } else {
+      shootButton.disabled = false;
+      status.textContent = `撮影済み ${capturedSheets.length} / ${maxCameraCaptures}枚。続けて撮影できます。`;
+      startLiveDetection();
+    }
   }, 'image/jpeg', 0.94);
-}
-
-function retake() {
-  stopLiveDetection();
-  hideSheetOverlay();
-  capturedBlob = null;
-  if (previewUrl) URL.revokeObjectURL(previewUrl);
-  previewUrl = null;
-  preview.removeAttribute('src');
-  setPreviewing(false);
-  startLiveDetection();
-}
-
-function addCaptureToSheet() {
-  if (!capturedBlob || capturedSheets.length >= maxCameraCaptures) return;
-  const file = new File(
-    [capturedBlob],
-    `a4-camera-${String(capturedSheets.length + 1).padStart(2, '0')}-${new Date().toISOString().replace(/[:.]/g, '-')}.jpg`,
-    { type: 'image/jpeg', lastModified: Date.now() }
-  );
-  capturedSheets.push({ file, url: URL.createObjectURL(capturedBlob) });
-  renderCaptureSheet();
-  retake();
-  if (capturedSheets.length >= maxCameraCaptures) {
-    stopLiveDetection();
-    shootButton.disabled = true;
-    status.textContent = '12枚撮影しました。「撮影した画像を使用」を押してください。';
-  } else {
-    status.textContent = `撮影済み ${capturedSheets.length} / ${maxCameraCaptures}枚。続けて撮影できます。`;
-  }
 }
 
 function finishCaptures() {
@@ -278,8 +238,6 @@ function finishCaptures() {
 openButton?.addEventListener('click', openCamera);
 closeButton?.addEventListener('click', closeCamera);
 shootButton?.addEventListener('click', captureFrame);
-retakeButton?.addEventListener('click', retake);
-useButton?.addEventListener('click', addCaptureToSheet);
 finishButton?.addEventListener('click', finishCaptures);
 cameraDialog?.addEventListener('cancel', event => {
   event.preventDefault();
@@ -287,5 +245,5 @@ cameraDialog?.addEventListener('cancel', event => {
 });
 document.addEventListener('visibilitychange', () => {
   if (document.hidden && cameraDialog?.open) stopLiveDetection();
-  else if (!document.hidden && cameraDialog?.open && stream && !cameraDialog.classList.contains('previewing')) startLiveDetection();
+  else if (!document.hidden && cameraDialog?.open && stream) startLiveDetection();
 });

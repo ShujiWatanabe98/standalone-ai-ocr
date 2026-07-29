@@ -340,23 +340,10 @@ body:has(.camera-dialog[open]) {
   background: #000;
 }
 
-#cameraVideo,
-#cameraPreview {
+#cameraVideo {
   width: 100%;
   height: 100%;
   object-fit: cover;
-}
-
-#cameraPreview {
-  display: none;
-}
-
-.camera-dialog.previewing #cameraVideo {
-  display: none;
-}
-
-.camera-dialog.previewing #cameraPreview {
-  display: block;
 }
 
 .camera-guide {
