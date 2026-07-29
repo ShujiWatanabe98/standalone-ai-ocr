@@ -258,6 +258,11 @@ header nav button.active {
     width: 160px;
   }
 
+  .photo-control .patient-search-input,
+  .photo-control .therapist-search-input {
+    font-size: 16px;
+  }
+
   .capture-start {
     padding: 4px 6px;
   }
