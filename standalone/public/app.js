@@ -1,11 +1,11 @@
 import * as pdfjsLib from '/vendor/pdfjs/pdf.min.mjs';
 pdfjsLib.GlobalWorkerOptions.workerSrc='/vendor/pdfjs/pdf.worker.min.mjs';
 
-function loadTherapists(){
+function loadLocalTherapists(){
   try{const saved=JSON.parse(localStorage.getItem('therapists')||'[]');return Array.isArray(saved)?saved:[]}
   catch{return []}
 }
-const state={patients:[],jobs:[],rehabRecords:[],preRehabSummary:null,imageDataUrl:null,imageDataUrls:[],batchItems:[],currentJobId:null,currentJobIds:[],poll:null,selectedPatientTimelineId:null,historyExpanded:false,dischargeWarningsShown:new Set(),therapists:loadTherapists(),pendingRehabDeleteId:null};
+const state={patients:[],jobs:[],rehabRecords:[],preRehabSummary:null,imageDataUrl:null,imageDataUrls:[],batchItems:[],currentJobId:null,currentJobIds:[],poll:null,selectedPatientTimelineId:null,historyExpanded:false,dischargeWarningsShown:new Set(),therapists:[],pendingRehabDeleteId:null};
 const $=s=>document.querySelector(s);
 const alert=message=>{const target=$('#captureMessage');if(target)target.textContent=String(message);console.info(message)};
 const confirm=()=>true;
@@ -38,12 +38,12 @@ function jobProgress(status){return({REQUEST:20,PROCESSING:65,OCR_DONE:100,DONE:
 
 async function loadHealth(){try{const h=await api('/api/health');$('#health').textContent=h.apiKeyConfigured?`稼働中・${h.model}`:'稼働中・APIキー未設定';$('#health').classList.add('ok')}catch{$('#health').textContent='サーバー未接続'}}
 function patientLabel(patient){return `${patient.facilityPatientId}｜${patient.name}`}
-function saveTherapists(){localStorage.setItem('therapists',JSON.stringify(state.therapists))}
+async function loadTherapists(){const legacy=loadLocalTherapists();if(legacy.length){await Promise.all(legacy.map(therapist=>api('/api/therapists',{method:'POST',body:JSON.stringify({name:therapist.name})})));localStorage.removeItem('therapists')}state.therapists=await api('/api/therapists');renderTherapists()}
 function renderTherapists(){
   const box=$('#therapistList');if(!box)return;
   box.innerHTML=state.therapists.length?state.therapists.map(therapist=>`<div class="card therapist-card"><strong>${esc(therapist.name)}</strong><button class="secondary" type="button" data-delete-therapist="${esc(therapist.id)}">削除</button></div>`).join(''):'<p>療法士はまだ登録されていません。</p>';
   const searchList=$('#therapistSearchList');if(searchList)searchList.innerHTML=state.therapists.map(therapist=>`<option value="${esc(therapist.name)}"></option>`).join('');
-  box.querySelectorAll('[data-delete-therapist]').forEach(button=>button.addEventListener('click',()=>{if(button.dataset.confirmDelete!=='true'){button.dataset.confirmDelete='true';button.textContent='再押下で登録削除';return}state.therapists=state.therapists.filter(item=>item.id!==button.dataset.deleteTherapist);saveTherapists();renderTherapists();$('#therapistFormStatus').textContent='登録療法士を削除しました。'}));
+  box.querySelectorAll('[data-delete-therapist]').forEach(button=>button.addEventListener('click',async()=>{if(button.dataset.confirmDelete!=='true'){button.dataset.confirmDelete='true';button.textContent='再押下で登録削除';return}button.disabled=true;try{await api(`/api/therapists/${encodeURIComponent(button.dataset.deleteTherapist)}`,{method:'DELETE',body:'{}'});await loadTherapists();$('#therapistFormStatus').textContent='登録療法士を削除しました。'}catch(error){button.disabled=false;$('#therapistFormStatus').textContent=error.message}}));
 }
 function selectedTherapistName(){const name=$('#therapistSearch').value.trim();return state.therapists.some(therapist=>therapist.name===name)?name:''}
 function syncPatientSearch(){const patient=state.patients.find(p=>p.id===$('#patientSelect').value);$('#patientSearch').value=patient?patientLabel(patient):'';validateCapture()}
@@ -354,7 +354,7 @@ $('#captureStopButton').onclick=async()=>{const activeIds=state.currentJobIds.fi
 $('#retryButton').onclick=async()=>{await api(`/api/jobs/${state.currentJobId}/retry`,{method:'POST',body:'{}'});await loadJobs()};
 $('#confirmButton').onclick=async()=>{if(!confirm('修正内容を確定しますか？'))return;await api(`/api/jobs/${state.currentJobId}/confirm`,{method:'PUT',body:JSON.stringify({result:collectResult()})});await loadJobs();alert('確定しました')};
 $('#patientForm').onsubmit=async e=>{e.preventDefault();const form=new FormData(e.target);try{await api('/api/patients',{method:'POST',body:JSON.stringify(Object.fromEntries(form))});e.target.reset();await loadPatients()}catch(err){alert(err.message)}};
-$('#therapistForm').onsubmit=e=>{e.preventDefault();const data=Object.fromEntries(new FormData(e.currentTarget).entries()),status=$('#therapistFormStatus');const name=String(data.name||'').trim();if(state.therapists.some(item=>item.name===name)){status.textContent='同じ名前の療法士が登録されています。';return}state.therapists.push({id:`therapist-${Date.now()}`,name});saveTherapists();e.currentTarget.reset();status.textContent='登録しました。';renderTherapists();if(state.selectedPatientTimelineId)renderClinicalFlow(state.selectedPatientTimelineId)};
+$('#therapistForm').onsubmit=async event=>{event.preventDefault();const data=Object.fromEntries(new FormData(event.currentTarget).entries()),status=$('#therapistFormStatus');const name=String(data.name||'').trim();if(state.therapists.some(item=>item.name===name)){status.textContent='同じ名前の療法士が登録されています。';return}const button=event.currentTarget.querySelector('button');button.disabled=true;try{await api('/api/therapists',{method:'POST',body:JSON.stringify({name})});event.currentTarget.reset();await loadTherapists();status.textContent='データベースに登録しました。';if(state.selectedPatientTimelineId)renderClinicalFlow(state.selectedPatientTimelineId)}catch(error){status.textContent=error.message}finally{button.disabled=false}};
 function detailResultRows(result){return result.fields.map((field,index)=>`<tr><td>${itemTextMarkup(field.label)}</td><td>${optimizedValueControl(field,'detail-field-value',`data-index="${index}" aria-label="${esc(field.label)}の値"`)}</td></tr>`).join('')}
 function detailResultTable(result){
   if(result.testType!=='BIT')return `<table><thead><tr><th>項目</th><th>値（修正可能）</th></tr></thead><tbody>${detailResultRows(result)}</tbody></table>`;
@@ -449,5 +449,4 @@ $('#deleteAllHistory').onclick=async()=>{if(!state.jobs.length){alert('削除す
 $('#clearDevCacheButton').onclick=async()=>{const button=$('#clearDevCacheButton');button.disabled=true;button.textContent='クリア中…';try{localStorage.clear();sessionStorage.clear();if('caches'in window)await Promise.all((await caches.keys()).map(name=>caches.delete(name)));if('serviceWorker'in navigator){const registrations=await navigator.serviceWorker.getRegistrations();await Promise.all(registrations.map(registration=>registration.unregister()))}const url=new URL(location.href);url.searchParams.set('cacheClear',Date.now().toString());location.replace(url)}catch(error){button.disabled=false;button.textContent='キャッシュクリア';alert(`キャッシュをクリアできませんでした：${error.message}`)}};
 $('#logoutButton').onclick=async()=>{const button=$('#logoutButton');button.disabled=true;try{await api('/api/auth/logout',{method:'POST',body:'{}'});location.href='/login.html'}catch(error){button.disabled=false;alert(error.message)}};
 $('#evaluationDateOverride').value=todayValue();
-renderTherapists();
-await Promise.all([loadHealth(),loadPatients(),loadJobs()]);
+await Promise.all([loadHealth(),loadPatients(),loadJobs(),loadTherapists()]);

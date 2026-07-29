@@ -45,7 +45,7 @@ const allowedImageTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const databaseUrl = process.env.DATABASE_URL || '';
 const sqlPool = databaseUrl ? new pg.Pool({ connectionString: databaseUrl }) : null;
 
-let db = { version: 4, hospitals: [], patients: [], jobs: [], rehabRecords: [] };
+let db = { version: 5, hospitals: [], patients: [], therapists: [], jobs: [], rehabRecords: [] };
 let writeChain = Promise.resolve();
 
 if (!['127.0.0.1', 'localhost', '::1'].includes(host) && (!authUser || !authPassword || !encryptionKey)) {
@@ -80,8 +80,32 @@ if (sqlPool) {
 db.patients.forEach(patient => { if (!patient.tenantId) patient.tenantId = facilityId; });
 db.jobs.forEach(job => { if (!job.tenantId) job.tenantId = facilityId; });
 if (!Array.isArray(db.hospitals)) db.hospitals = [];
+if (!Array.isArray(db.therapists)) db.therapists = [];
 if (!Array.isArray(db.rehabRecords)) db.rehabRecords = [];
-db.version = Math.max(Number(db.version) || 0, 4);
+db.version = Math.max(Number(db.version) || 0, 5);
+if (db.intepTestSeedVersion !== 1) {
+  const intepHospital = db.hospitals.find(hospital => hospital.loginName === 'intep');
+  if (intepHospital) {
+    const tenantId = intepHospital.id;
+    const deletedJobs = db.jobs.filter(job => job.tenantId === tenantId);
+    for (const job of deletedJobs) if (job.imageFile) await deleteImage(job.imageFile);
+    db.patients = db.patients.filter(patient => patient.tenantId !== tenantId);
+    db.jobs = db.jobs.filter(job => job.tenantId !== tenantId);
+    db.rehabRecords = db.rehabRecords.filter(record => record.tenantId !== tenantId);
+    db.therapists = db.therapists.filter(therapist => therapist.tenantId !== tenantId);
+    const timestamp = now();
+    db.patients.push(
+      { id: id('patient'), tenantId, facilityPatientId: 'TEST001', name: '佐藤 美咲', birthDate: '1948-04-12', createdAt: timestamp, updatedAt: timestamp },
+      { id: id('patient'), tenantId, facilityPatientId: 'TEST002', name: '鈴木 健一', birthDate: '1956-09-23', createdAt: timestamp, updatedAt: timestamp },
+      { id: id('patient'), tenantId, facilityPatientId: 'TEST003', name: '高橋 和子', birthDate: '1963-02-08', createdAt: timestamp, updatedAt: timestamp },
+    );
+    for (const name of ['田中 陽介', '山本 奈緒', '伊藤 拓海']) {
+      db.therapists.push({ id: id('therapist'), tenantId, name, createdAt: timestamp, updatedAt: timestamp });
+    }
+    db.intepTestSeedVersion = 1;
+    await persist();
+  }
+}
 if ('audit' in db) { delete db.audit; await persist(); }
 const interruptedJobs = db.jobs.filter(job => ['REQUEST', 'PROCESSING'].includes(job.status));
 if (interruptedJobs.length) {
@@ -1072,6 +1096,31 @@ const server = http.createServer(async (req, res) => {
       if (db.patients.some(p => p.tenantId === identity.tenantId && p.facilityPatientId === facilityPatientId)) return sendJson(res, 409, { error: '同じ施設内患者IDが登録済みです' });
       const patient = { id: id('patient'), tenantId: identity.tenantId, name, facilityPatientId, birthDate: safeText(body.birthDate, 10), createdAt: now(), updatedAt: now() };
       db.patients.push(patient); await persist(); return sendJson(res, 201, publicPatient(patient, identity.tenantId));
+    }
+    if (req.method === 'GET' && url.pathname === '/api/therapists') {
+      return sendJson(res, 200, db.therapists
+        .filter(therapist => therapist.tenantId === identity.tenantId)
+        .sort((a, b) => a.name.localeCompare(b.name, 'ja')));
+    }
+    if (req.method === 'POST' && url.pathname === '/api/therapists') {
+      const body = await readJson(req);
+      const name = safeText(body.name, 120);
+      if (!name) return sendJson(res, 400, { error: '療法士名を入力してください。' });
+      const existing = db.therapists.find(therapist => therapist.tenantId === identity.tenantId && therapist.name === name);
+      if (existing) return sendJson(res, 200, existing);
+      const timestamp = now();
+      const therapist = { id: id('therapist'), tenantId: identity.tenantId, name, createdAt: timestamp, updatedAt: timestamp };
+      db.therapists.push(therapist);
+      await persist();
+      return sendJson(res, 201, therapist);
+    }
+    const therapistMatch = /^\/api\/therapists\/([^/]+)$/.exec(url.pathname);
+    if (req.method === 'DELETE' && therapistMatch) {
+      const index = db.therapists.findIndex(therapist => therapist.tenantId === identity.tenantId && therapist.id === therapistMatch[1]);
+      if (index < 0) return sendJson(res, 404, { error: '療法士が見つかりません。' });
+      const [deleted] = db.therapists.splice(index, 1);
+      await persist();
+      return sendJson(res, 200, { deletedId: deleted.id });
     }
     if (req.method === 'GET' && url.pathname === '/api/rehab-records') {
       const patientId = safeText(url.searchParams.get('patientId'));
