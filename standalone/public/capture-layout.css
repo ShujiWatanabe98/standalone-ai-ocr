@@ -183,6 +183,8 @@ header nav button.active {
   resize: vertical;
 }
 .result-preview .ocr-value{transform:translate(-50%,-50%)}
+.ocr-value.anchored{min-width:18px;max-width:96px;padding:1px 4px;font-size:clamp(9px,.9vw,12px);line-height:1.15;overflow:hidden;text-overflow:ellipsis}
+.ocr-overlay.landscape-overlay .ocr-value.anchored{min-width:16px;max-width:72px;padding:1px 3px;font-size:clamp(8px,.72vw,10px)}
 .detail-result-preview{width:min(100% - 84px,900px);margin:12px 42px;min-height:240px}.detail-result-preview img{max-height:min(62vh,720px)}
 #detailContent .detail-field-value{width:100%;min-width:90px;min-height:26px;height:26px;margin:0;padding:2px 6px;border-radius:5px;font-size:13px;line-height:1.15;font-weight:700}
 
