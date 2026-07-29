@@ -149,6 +149,7 @@ assert.match(captureApp, /landscape-overlay/);
 assert.match(captureApp, /const bitPageNumber=Number/);
 assert.match(captureCss, /\.ocr-value\.bit-page1-min\{min-width:0;padding:1px 5px;transform:translate\(-50%,-50%\);font-size:12px/);
 assert.match(captureCss, /\.photo-control \.patient-search-input,\s*\.photo-control \.therapist-search-input \{\s*font-size: 16px;/);
+assert.match(cameraCss, /@media \(max-width: 760px\)[\s\S]*?\.photo-control \.patient-search-input,\s*\.photo-control \.therapist-search-input \{\s*font-size: 16px;/);
 assert.match(captureApp, /function positionBitOverlays\(overlay\)/);
 assert.match(captureApp, /translateY\(\$\{boxHeight\+3\}px\)/);
 assert.match(captureApp, /class="first-result-row"/);
