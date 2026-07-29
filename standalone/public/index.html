@@ -52,15 +52,20 @@
         </div>
       </div>
       <canvas id="cameraCanvas" hidden></canvas>
+      <section class="camera-capture-sheet" aria-labelledby="cameraCaptureSheetTitle">
+        <div class="camera-capture-sheet-head"><h3 id="cameraCaptureSheetTitle">撮影シート（最大12枚）</h3><strong id="cameraCaptureCount">0 / 12枚</strong></div>
+        <div id="cameraCaptureSlots" class="camera-capture-slots"></div>
+        <button id="finishCameraButton" class="primary camera-finish-button" type="button" hidden>撮影した画像を使用</button>
+      </section>
       <div class="camera-actions">
         <button id="closeCameraButton" class="camera-close-button" type="button" aria-label="カメラを閉じる">×</button>
         <button id="retakeCameraButton" class="secondary" type="button" hidden>撮り直す</button>
         <button id="shootCameraButton" class="primary camera-shutter" type="button">撮影</button>
-        <button id="useCameraButton" class="primary" type="button" hidden>この画像を使用</button>
+        <button id="useCameraButton" class="primary" type="button" hidden>シートに追加</button>
       </div>
     </section>
   </dialog>
   <script type="module" src="/app.js?v=20260729-remove-cache-clear-1"></script>
-  <script type="module" src="/camera-capture.js?v=20260728-close-left-of-shutter-1"></script>
+  <script type="module" src="/camera-capture.js?v=20260729-camera-12-sheet-1"></script>
 </body>
 </html>

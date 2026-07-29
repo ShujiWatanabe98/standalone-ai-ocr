@@ -196,11 +196,94 @@ body:has(.camera-dialog[open]) {
 
 .camera-shell {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(220px, 1fr) auto auto;
   width: 100%;
   height: 100%;
   min-width: 0;
   overflow: hidden;
+}
+
+.camera-capture-sheet {
+  position: relative;
+  z-index: 3;
+  padding: 8px 14px 10px;
+  background: #111d22;
+  border-top: 1px solid #ffffff24;
+}
+
+.camera-capture-sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 7px;
+}
+
+.camera-capture-sheet-head h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.camera-capture-sheet-head strong {
+  color: #5fffd2;
+  font-size: 13px;
+}
+
+.camera-capture-slots {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(48px, 1fr));
+  gap: 6px;
+}
+
+.camera-capture-slot {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 54px;
+  overflow: hidden;
+  border: 1px dashed #ffffff55;
+  border-radius: 6px;
+  background: #081014;
+  color: #91a3aa;
+}
+
+.camera-capture-slot > span {
+  position: absolute;
+  z-index: 2;
+  top: 2px;
+  left: 4px;
+  font-size: 10px;
+}
+
+.camera-capture-slot small {
+  font-size: 10px;
+}
+
+.camera-capture-slot img {
+  width: 100%;
+  height: 54px;
+  object-fit: cover;
+}
+
+.camera-capture-slot button {
+  position: absolute;
+  z-index: 3;
+  top: 2px;
+  right: 2px;
+  width: 22px;
+  min-width: 22px;
+  height: 22px;
+  min-height: 22px;
+  padding: 0;
+  border-radius: 50%;
+  background: #000c;
+  color: #fff;
+  line-height: 20px;
+}
+
+.camera-finish-button {
+  width: 100%;
+  min-height: 40px;
+  margin-top: 8px;
 }
 
 .camera-header {
@@ -412,6 +495,10 @@ body:has(.camera-dialog[open]) {
 
   .camera-dialog {
     width: 100%;
+  }
+
+  .camera-capture-slots {
+    grid-template-columns: repeat(4, minmax(44px, 1fr));
   }
 }
 

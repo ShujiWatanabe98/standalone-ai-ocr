@@ -72,6 +72,13 @@ assert.doesNotMatch(captureHtml, /camera-header[\s\S]*?id="closeCameraButton"[\s
 assert.match(cameraCss, /\.camera-actions \.camera-close-button/);
 assert.match(cameraCss, /\.camera-actions\s*\{\s*position:\s*relative/);
 assert.match(cameraCss, /\.camera-actions \.camera-close-button\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?left:\s*18px;[\s\S]*?top:\s*50%/);
+assert.match(captureHtml, /id="cameraCaptureSlots"/);
+assert.match(captureHtml, /id="cameraCaptureCount"/);
+assert.match(captureHtml, /id="finishCameraButton"/);
+assert.match(cameraApp, /const maxCameraCaptures = 12/);
+assert.match(cameraApp, /Array\.from\(\{ length: maxCameraCaptures \}/);
+assert.match(cameraApp, /capturedSheets\.forEach\(item => transfer\.items\.add\(item\.file\)\)/);
+assert.match(cameraCss, /\.camera-capture-slots/);
 assert.match(serverSource, /async function detectEvaluationSheet/);
 assert.match(serverSource, /rehainfo-sheet-detection-v1/);
 assert.match(serverSource, /url\.pathname === '\/api\/detect-sheet'/);

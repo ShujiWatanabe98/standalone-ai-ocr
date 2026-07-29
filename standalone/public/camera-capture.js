@@ -4,19 +4,50 @@ const closeButton = document.querySelector('#closeCameraButton');
 const shootButton = document.querySelector('#shootCameraButton');
 const retakeButton = document.querySelector('#retakeCameraButton');
 const useButton = document.querySelector('#useCameraButton');
+const finishButton = document.querySelector('#finishCameraButton');
 const video = document.querySelector('#cameraVideo');
 const preview = document.querySelector('#cameraPreview');
 const canvas = document.querySelector('#cameraCanvas');
 const status = document.querySelector('#cameraStatus');
 const imageInput = document.querySelector('#imageInput');
 const sheetOverlay = document.querySelector('#cameraSheetOverlay');
+const captureSlots = document.querySelector('#cameraCaptureSlots');
+const captureCount = document.querySelector('#cameraCaptureCount');
 
 let stream = null;
 let capturedBlob = null;
 let previewUrl = null;
+let capturedSheets = [];
 let detectionController = null;
 let liveDetectionTimer = null;
 let liveDetectionActive = false;
+const maxCameraCaptures = 12;
+
+function renderCaptureSheet() {
+  if (!captureSlots) return;
+  captureCount.textContent = `${capturedSheets.length} / ${maxCameraCaptures}枚`;
+  captureSlots.innerHTML = Array.from({ length: maxCameraCaptures }, (_, index) => {
+    const item = capturedSheets[index];
+    return item
+      ? `<article class="camera-capture-slot filled"><span>${index + 1}</span><img src="${item.url}" alt="${index + 1}枚目の撮影画像"><button type="button" data-remove-capture="${index}" aria-label="${index + 1}枚目を削除">×</button></article>`
+      : `<article class="camera-capture-slot"><span>${index + 1}</span><small>未撮影</small></article>`;
+  }).join('');
+  captureSlots.querySelectorAll('[data-remove-capture]').forEach(button => button.addEventListener('click', () => {
+    const index = Number(button.dataset.removeCapture);
+    const [removed] = capturedSheets.splice(index, 1);
+    if (removed?.url) URL.revokeObjectURL(removed.url);
+    shootButton.disabled = false;
+    renderCaptureSheet();
+    status.textContent = `撮影済み ${capturedSheets.length} / ${maxCameraCaptures}枚`;
+  }));
+  finishButton.hidden = capturedSheets.length === 0;
+}
+
+function clearCaptureSheet() {
+  capturedSheets.forEach(item => URL.revokeObjectURL(item.url));
+  capturedSheets = [];
+  renderCaptureSheet();
+}
 
 function showSheetOverlay(text, state = 'detecting') {
   if (!sheetOverlay) return;
@@ -161,6 +192,7 @@ async function startCamera() {
 
 async function openCamera() {
   clearCapture();
+  clearCaptureSheet();
   cameraDialog.showModal();
   status.textContent = 'カメラを起動しています…';
   try {
@@ -177,6 +209,7 @@ async function openCamera() {
 function closeCamera() {
   stopCamera();
   clearCapture();
+  clearCaptureSheet();
   shootButton.disabled = false;
   if (cameraDialog.open) cameraDialog.close();
 }
@@ -214,15 +247,29 @@ function retake() {
   startLiveDetection();
 }
 
-function useCapture() {
-  if (!capturedBlob) return;
+function addCaptureToSheet() {
+  if (!capturedBlob || capturedSheets.length >= maxCameraCaptures) return;
   const file = new File(
     [capturedBlob],
-    `a4-camera-${new Date().toISOString().replace(/[:.]/g, '-')}.jpg`,
+    `a4-camera-${String(capturedSheets.length + 1).padStart(2, '0')}-${new Date().toISOString().replace(/[:.]/g, '-')}.jpg`,
     { type: 'image/jpeg', lastModified: Date.now() }
   );
+  capturedSheets.push({ file, url: URL.createObjectURL(capturedBlob) });
+  renderCaptureSheet();
+  retake();
+  if (capturedSheets.length >= maxCameraCaptures) {
+    stopLiveDetection();
+    shootButton.disabled = true;
+    status.textContent = '12枚撮影しました。「撮影した画像を使用」を押してください。';
+  } else {
+    status.textContent = `撮影済み ${capturedSheets.length} / ${maxCameraCaptures}枚。続けて撮影できます。`;
+  }
+}
+
+function finishCaptures() {
+  if (!capturedSheets.length) return;
   const transfer = new DataTransfer();
-  transfer.items.add(file);
+  capturedSheets.forEach(item => transfer.items.add(item.file));
   imageInput.files = transfer.files;
   imageInput.dispatchEvent(new Event('change', { bubbles: true }));
   closeCamera();
@@ -232,7 +279,8 @@ openButton?.addEventListener('click', openCamera);
 closeButton?.addEventListener('click', closeCamera);
 shootButton?.addEventListener('click', captureFrame);
 retakeButton?.addEventListener('click', retake);
-useButton?.addEventListener('click', useCapture);
+useButton?.addEventListener('click', addCaptureToSheet);
+finishButton?.addEventListener('click', finishCaptures);
 cameraDialog?.addEventListener('cancel', event => {
   event.preventDefault();
   closeCamera();
