@@ -14,14 +14,17 @@
   flex-wrap: nowrap;
   gap: 14px;
   margin-top: 16px;
-  padding-bottom: 8px;
+  padding-bottom: 16px;
   overflow-x: auto;
   overscroll-behavior-inline: contain;
 }
 
 .patient-sheet-card {
+  display: flex;
+  flex-direction: column;
   flex: 0 0 240px;
   position: relative;
+  min-height: 350px;
   padding: 0;
   overflow: hidden;
   text-align: left;
@@ -38,6 +41,7 @@
 
 .patient-sheet-open {
   display: block;
+  flex: 1 1 auto;
   width: 100%;
   padding: 0;
   border: 0;
@@ -119,15 +123,21 @@
 }
 
 .discharge-button {
+  display: block;
+  position: relative;
+  flex: 0 0 auto;
   width: calc(100% - 20px);
-  margin: 0 10px 10px;
+  margin: 12px 10px 14px;
   border-color: var(--reha-st);
   color: var(--reha-st);
 }
 
 .undo-discharge-button {
+  display: block;
+  position: relative;
+  flex: 0 0 auto;
   width: calc(100% - 20px);
-  margin: 0 10px 10px;
+  margin: 12px 10px 14px;
   border-color: var(--reha-back);
   color: var(--reha-back);
 }

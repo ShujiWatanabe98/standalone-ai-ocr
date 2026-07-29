@@ -38,6 +38,7 @@ const captureApp = await readFile(new URL('../public/app.js', import.meta.url), 
 const cameraApp = await readFile(new URL('../public/camera-capture.js', import.meta.url), 'utf8');
 const cameraCss = await readFile(new URL('../public/camera-capture.css', import.meta.url), 'utf8');
 const captureCss = await readFile(new URL('../public/capture-layout.css', import.meta.url), 'utf8');
+const patientTimelineCss = await readFile(new URL('../public/patient-timeline.css', import.meta.url), 'utf8');
 const serverSource = await readFile(new URL('../server.mjs', import.meta.url), 'utf8');
 assert.match(serverSource, /reasoning:\s*\{\s*effort:\s*reasoningEffort\s*\}/);
 assert.match(serverSource, /buildRoutedOcrPrompt/);
@@ -176,6 +177,8 @@ assert.match(captureApp, /患者欄にも追加しました/);
 assert.match(captureApp, /careStageLabel/);
 assert.match(captureApp, /data-discharge-job/);
 assert.match(captureApp, /data-undo-discharge-job/);
+assert.match(patientTimelineCss, /\.patient-sheet-card\s*\{[\s\S]*?flex-direction:\s*column;[\s\S]*?min-height:\s*350px/);
+assert.match(patientTimelineCss, /\.discharge-button\s*\{[\s\S]*?margin:\s*12px 10px 14px/);
 assert.match(captureApp, /data-delete-job/);
 assert.match(serverSource, /deletedId/);
 assert.match(captureApp, /途中経過に戻す/);
