@@ -21,6 +21,18 @@ button.undo-discharge-button:not(:disabled) {
   color: #fff !important;
 }
 
+.evaluation-date-override {
+  min-width: 190px;
+  margin: 0;
+  font-size: 11px;
+  text-align: left;
+}
+
+.evaluation-date-override input {
+  margin-top: 3px;
+  padding: 7px 9px;
+}
+
 button:disabled {
   background: var(--reha-disabled) !important;
   border-color: var(--reha-disabled) !important;

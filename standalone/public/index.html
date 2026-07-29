@@ -4,10 +4,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>単体 AI OCR</title>
-  <link rel="stylesheet" href="/styles.css?v=20260727-button-states-1">
+  <link rel="stylesheet" href="/styles.css?v=20260729-past-evaluation-1">
   <link rel="stylesheet" href="/capture-layout.css?v=20260728-bit-page1-y-regression-1">
-  <link rel="stylesheet" href="/patient-timeline.css?v=20260727-summary-stage-switch-1">
-  <link rel="stylesheet" href="/camera-capture.css?v=20260728-close-left-edge-1">
+  <link rel="stylesheet" href="/patient-timeline.css?v=20260729-rehab-record-delete-1">
+  <link rel="stylesheet" href="/camera-capture.css?v=20260729-capture-therapist-select-1">
 </head>
 <body>
   <header>
@@ -19,7 +19,7 @@
     <section id="view-capture" class="view active">
       <div class="panel capture-panel">
         <div class="capture-controls">
-          <div class="photo-control"><span class="photo-control-title">カメラ撮影・画像・PDF選択（最大12ページ）</span><div class="photo-input-row"><button id="openCameraButton" class="secondary camera-open-button" type="button">カメラ撮影</button><label class="secondary image-select-button">ファイル選択<input id="imageInput" type="file" accept="image/*,application/pdf,.pdf" multiple></label><input id="patientSearch" class="patient-search-input" type="search" list="patientSearchList" placeholder="患者を探す" aria-label="患者を探す" autocomplete="off"><datalist id="patientSearchList"></datalist></div></div>
+          <div class="photo-control"><span class="photo-control-title">カメラ撮影・画像・PDF選択（最大12ページ）</span><div class="photo-input-row"><button id="openCameraButton" class="secondary camera-open-button" type="button">カメラ撮影</button><label class="secondary image-select-button">ファイル選択<input id="imageInput" type="file" accept="image/*,application/pdf,.pdf" multiple></label><input id="patientSearch" class="patient-search-input" type="search" list="patientSearchList" placeholder="患者を選択" aria-label="患者を選択" autocomplete="off"><datalist id="patientSearchList"></datalist><input id="therapistSearch" class="therapist-search-input" type="search" list="therapistSearchList" placeholder="療法士を選択" aria-label="療法士を選択" autocomplete="off"><datalist id="therapistSearchList"></datalist><label class="evaluation-date-override">評価実施日（過去の評価登録可能）<input id="evaluationDateOverride" type="date" aria-label="評価実施日（過去の評価登録可能）"></label></div></div>
           <div class="start-control"><button id="correctionButton" class="secondary image-correct-button" disabled title="余白削除・縮小・画像補正は停止中です">画像補正（停止中）</button><button id="startButton" class="primary capture-start compact-ocr-button" disabled>AI OCRを開始</button><button id="captureStopButton" class="stop-button capture-stop-button" disabled>停止</button><div id="ocrProgress" class="ocr-progress" role="progressbar" aria-label="OCR処理進捗" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="ocrProgressBar"></span></div><small id="ocrProgressText">待機中</small><span class="supported-sheets">OCR可能シート：FMA、BBS、コース、STEF、SLTA、BIT、CAT-R、WAIS-IV、WMS-R</span></div>
         </div>
         <p class="message">評価シート名は画像からAI OCRが自動判定します。</p>
@@ -32,8 +32,9 @@
         <p id="captureMessage" class="message capture-message"></p>
       </div>
     </section>
-    <section id="view-history" class="view"><div class="panel"><div class="jobhead"><h2>履歴・回覧</h2><div class="history-header-actions"><button id="refreshHistory">更新</button><button id="deleteAllHistory" class="danger-button">削除</button></div></div><div id="historyList" class="cards"></div></div></section>
-    <section id="view-patients" class="view"><div class="panel"><h2>患者管理</h2><div class="grid2"><div><h3>患者登録</h3><form id="patientForm"><label>施設内患者ID<input name="facilityPatientId" required></label><label>患者名<input name="name" required></label><label>生年月日<input name="birthDate" type="date"></label><button class="primary">登録</button></form></div><div><h3>登録患者</h3><div id="patientList"></div></div></div></div><div class="panel patient-sheets-panel"><div class="jobhead"><h2>患者</h2><button id="refreshPatientSheets" type="button">更新</button></div><div class="patient-picker"><label for="patientTimelineSearch">患者を検索</label><input id="patientTimelineSearch" type="search" placeholder="患者ID・患者名を入力" autocomplete="off"><div id="patientTimelineSuggestions" class="patient-suggestions"></div></div><p class="message">入力中に表示される推奨患者を選択すると、OCRしたシートを確認できます。</p><div id="patientSheetTimeline"><p>患者を選択してください。</p></div></div></section>
+    <section id="view-history" class="view"><div class="panel"><div class="jobhead"><h2>OCR履歴</h2><div class="history-header-actions"><button id="refreshHistory">更新</button><button id="deleteAllHistory" class="danger-button">削除</button></div></div><div id="historyList" class="cards"></div></div></section>
+    <section id="view-rehab-history" class="view"><div class="panel patient-sheets-panel"><div class="jobhead"><h2>患者リハビリ履歴</h2><button id="refreshPatientSheets" type="button">更新</button></div><div class="patient-picker"><label for="patientTimelineSearch">患者を検索</label><input id="patientTimelineSearch" type="search" placeholder="患者ID・患者名を入力" autocomplete="off"><div id="patientTimelineSuggestions" class="patient-suggestions"></div></div><p class="message">患者を選択すると、評価シートとリハビリ経過記録を確認できます。</p><div id="patientSheetTimeline"><p>患者を選択してください。</p></div></div></section>
+    <section id="view-patients" class="view"><div class="panel"><h2>患者管理</h2><div class="grid2"><div><h3>患者登録</h3><form id="patientForm"><label>施設内患者ID<input name="facilityPatientId" required></label><label>患者名<input name="name" required></label><label>生年月日<input name="birthDate" type="date"></label><button class="primary">登録</button></form></div><div><h3>登録患者</h3><div id="patientList"></div></div></div></div><div class="panel therapist-management-panel"><h2>療法士管理</h2><div class="grid2"><div><h3>療法士登録</h3><form id="therapistForm"><label>療法士名<input name="name" required placeholder="氏名"></label><button class="primary">登録</button><small id="therapistFormStatus"></small></form></div><div><h3>登録療法士</h3><div id="therapistList"></div></div></div></div></section>
   </main>
   <dialog id="detailDialog"><button id="closeDialog" class="close">閉じる</button><div id="detailContent"></div></dialog>
   <dialog id="cameraDialog" class="camera-dialog" aria-labelledby="cameraTitle">
@@ -59,7 +60,7 @@
       </div>
     </section>
   </dialog>
-  <script type="module" src="/app.js?v=20260728-bit-page1-y-regression-1"></script>
+  <script type="module" src="/app.js?v=20260729-progress-detail-no-discharge-1"></script>
   <script type="module" src="/camera-capture.js?v=20260728-close-left-of-shutter-1"></script>
 </body>
 </html>

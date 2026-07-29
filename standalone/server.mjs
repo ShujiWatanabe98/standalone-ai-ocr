@@ -45,7 +45,7 @@ const allowedImageTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const databaseUrl = process.env.DATABASE_URL || '';
 const sqlPool = databaseUrl ? new pg.Pool({ connectionString: databaseUrl }) : null;
 
-let db = { version: 3, hospitals: [], patients: [], jobs: [] };
+let db = { version: 4, hospitals: [], patients: [], jobs: [], rehabRecords: [] };
 let writeChain = Promise.resolve();
 
 if (!['127.0.0.1', 'localhost', '::1'].includes(host) && (!authUser || !authPassword || !encryptionKey)) {
@@ -80,6 +80,8 @@ if (sqlPool) {
 db.patients.forEach(patient => { if (!patient.tenantId) patient.tenantId = facilityId; });
 db.jobs.forEach(job => { if (!job.tenantId) job.tenantId = facilityId; });
 if (!Array.isArray(db.hospitals)) db.hospitals = [];
+if (!Array.isArray(db.rehabRecords)) db.rehabRecords = [];
+db.version = Math.max(Number(db.version) || 0, 4);
 if ('audit' in db) { delete db.audit; await persist(); }
 const interruptedJobs = db.jobs.filter(job => ['REQUEST', 'PROCESSING'].includes(job.status));
 if (interruptedJobs.length) {
@@ -146,8 +148,98 @@ function publicHospital(hospital) {
   return { id: hospital.id, name: hospital.name, loginName: hospital.loginName, active: hospital.active !== false, createdAt: hospital.createdAt, updatedAt: hospital.updatedAt };
 }
 function publicPatient(patient, tenantId) {
-  return { ...patient, jobCount: db.jobs.filter(j => j.tenantId === tenantId && j.patientId === patient.id).length };
+  return {
+    ...patient,
+    jobCount: db.jobs.filter(j => j.tenantId === tenantId && j.patientId === patient.id).length,
+    rehabRecordCount: db.rehabRecords.filter(record => record.tenantId === tenantId && record.patientId === patient.id).length,
+  };
 }
+function publicRehabRecord(record) {
+  return { ...record };
+}
+function numericFieldMap(job) {
+  const result = job.confirmedResult || job.result;
+  return new Map((result?.fields || []).flatMap(field => {
+    const raw = String(field.value ?? '').trim().replace(',', '.');
+    const value = /^[-+]?\d+(?:\.\d+)?$/.test(raw) ? Number(raw) : NaN;
+    return Number.isFinite(value) ? [[String(field.label || field.id), value]] : [];
+  }));
+}
+function jobEvaluationDate(job) {
+  const value = String(job?.confirmedResult?.evaluationDate || job?.result?.evaluationDate || '');
+  return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : '';
+}
+function jobClinicalSortKey(job) {
+  return `${jobEvaluationDate(job) || String(job?.createdAt || '').slice(0, 10)}|${job?.createdAt || ''}`;
+}
+function patientTrend(patientJobs) {
+  const completed = patientJobs.filter(job => job.result && ['OCR_DONE', 'DONE'].includes(job.status));
+  const representatives = [...new Map(completed.sort((a, b) => jobClinicalSortKey(a).localeCompare(jobClinicalSortKey(b))).map(job => [job.assessmentGroupId || job.id, job])).values()];
+  if (representatives.length < 2) return [];
+  const previous = representatives.at(-2);
+  const current = representatives.at(-1);
+  const previousFields = numericFieldMap(previous);
+  const currentFields = numericFieldMap(current);
+  return [...currentFields.entries()]
+    .filter(([label]) => previousFields.has(label))
+    .map(([label, value]) => ({ label, previous: previousFields.get(label), current: value, change: value - previousFields.get(label) }))
+    .filter(item => item.change !== 0)
+    .slice(0, 8);
+}
+function ocrReviewSummary(patientJobs) {
+  let confirmed = 0, aiEstimated = 0, missing = 0, unreadable = 0;
+  for (const job of patientJobs.filter(candidate => candidate.result)) {
+    const result = job.confirmedResult || job.result;
+    for (const field of result?.fields || []) {
+      const value = String(field.value ?? '').trim();
+      if (!value) missing += 1;
+      else if (job.confirmedResult) confirmed += 1;
+      else aiEstimated += 1;
+    }
+    if (/判読|不明|読み取れ|未記入/.test(String(result?.notes || ''))) unreadable += 1;
+  }
+  return { confirmed, aiEstimated, missing, unreadable };
+}
+let migratedLegacySummaries = 0;
+for (const job of db.jobs) {
+  const legacyEntries = [
+    ['INITIAL', job.rehabSummary, job.rehabSummaryUpdatedAt],
+    ['FOLLOW_UP', job.progressSummary, job.progressSummaryUpdatedAt],
+    ['DISCHARGE', job.dischargeSummary, job.dischargeSummaryUpdatedAt],
+  ];
+  for (const [recordType, text, recordedAt] of legacyEntries) {
+    const legacySourceKey = `${job.id}:${recordType}`;
+    if (!String(text || '').trim() || db.rehabRecords.some(record => record.legacySourceKey === legacySourceKey)) continue;
+    db.rehabRecords.push({
+      id: id('rehab'),
+      tenantId: job.tenantId,
+      patientId: job.patientId,
+      evaluationJobId: job.id,
+      recordType,
+      therapistName: '旧サマリ移行',
+      preCondition: '',
+      intervention: '',
+      durationMinutes: null,
+      assistanceLevel: '',
+      painBefore: null,
+      painAfter: null,
+      fatigueBefore: null,
+      fatigueAfter: null,
+      outcome: safeText(text, 4000),
+      nextPlan: '',
+      riskNotes: '',
+      approvalStatus: 'APPROVED',
+      approvedBy: '旧サマリ移行',
+      approvedAt: recordedAt || job.updatedAt || job.createdAt,
+      createdAt: recordedAt || job.updatedAt || job.createdAt,
+      updatedAt: recordedAt || job.updatedAt || job.createdAt,
+      revisions: [],
+      legacySourceKey,
+    });
+    migratedLegacySummaries += 1;
+  }
+}
+if (migratedLegacySummaries) await persist();
 function encryptBytes(content) {
   const plain = Buffer.isBuffer(content) ? content : Buffer.from(content);
   if (!encryptionKey) return plain;
@@ -302,10 +394,10 @@ function parseDataUrl(dataUrl) {
 
 function jobView(job) {
   const patient = db.patients.find(p => p.tenantId === job.tenantId && p.id === job.patientId);
-  const sameSheetJobs = db.jobs
-    .filter(candidate => candidate.tenantId === job.tenantId && candidate.patientId === job.patientId && candidate.evaluationType === job.evaluationType && candidate.result && ['OCR_DONE', 'DONE'].includes(candidate.status))
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-  const assessmentKeys = [...new Set(sameSheetJobs.map(candidate => candidate.assessmentGroupId || candidate.id))];
+  const sameSheetJobs = db.jobs.filter(candidate => candidate.tenantId === job.tenantId && candidate.patientId === job.patientId && candidate.evaluationType === job.evaluationType && candidate.result && ['OCR_DONE', 'DONE'].includes(candidate.status));
+  const assessmentKeys = [...new Map(sameSheetJobs
+    .sort((a, b) => jobClinicalSortKey(a).localeCompare(jobClinicalSortKey(b)))
+    .map(candidate => [candidate.assessmentGroupId || candidate.id, true])).keys()];
   const sheetIndex = assessmentKeys.indexOf(job.assessmentGroupId || job.id);
   const careStage = ['INITIAL', 'FOLLOW_UP', 'DISCHARGE'].includes(job.careStage) ? job.careStage : sheetIndex === 0 ? 'INITIAL' : sheetIndex > 0 ? 'FOLLOW_UP' : 'PENDING';
   const hasExistingDischarge = db.jobs.some(candidate =>
@@ -569,9 +661,12 @@ function evaluationForSummary(job) {
 }
 
 function previousSameSheetJob(job) {
-  return db.jobs
-    .filter(candidate => candidate.tenantId === job.tenantId && candidate.patientId === job.patientId && candidate.evaluationType === job.evaluationType && candidate.id !== job.id && candidate.result && candidate.createdAt < job.createdAt && (!job.assessmentGroupId || candidate.assessmentGroupId !== job.assessmentGroupId))
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0] || null;
+  const currentKey = jobClinicalSortKey(job);
+  const candidates = db.jobs
+    .filter(candidate => candidate.tenantId === job.tenantId && candidate.patientId === job.patientId && candidate.evaluationType === job.evaluationType && candidate.id !== job.id && candidate.result && (!job.assessmentGroupId || candidate.assessmentGroupId !== job.assessmentGroupId))
+    .sort((a, b) => jobClinicalSortKey(a).localeCompare(jobClinicalSortKey(b)));
+  const representatives = [...new Map(candidates.map(candidate => [candidate.assessmentGroupId || candidate.id, candidate])).values()];
+  return representatives.filter(candidate => jobClinicalSortKey(candidate) < currentKey).at(-1) || null;
 }
 
 async function generateProgressSummary(apiKey, job) {
@@ -602,9 +697,10 @@ ${JSON.stringify(evaluationForSummary(job))}`;
 }
 
 async function generateDischargeSummary(apiKey, job) {
+  const currentKey = jobClinicalSortKey(job);
   const sameSheetJobs = db.jobs
-    .filter(candidate => candidate.tenantId === job.tenantId && candidate.patientId === job.patientId && candidate.evaluationType === job.evaluationType && candidate.result && candidate.createdAt <= job.createdAt)
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    .filter(candidate => candidate.tenantId === job.tenantId && candidate.patientId === job.patientId && candidate.evaluationType === job.evaluationType && candidate.result && jobClinicalSortKey(candidate) <= currentKey)
+    .sort((a, b) => jobClinicalSortKey(a).localeCompare(jobClinicalSortKey(b)));
   if (!sameSheetJobs.length) throw new Error('退院サマリを作成できる評価履歴がありません');
   const groupRepresentatives = [...new Map(sameSheetJobs.map(candidate => [candidate.assessmentGroupId || candidate.id, candidate])).values()];
   const evaluations = groupRepresentatives.map((candidate, index) => ({
@@ -841,6 +937,7 @@ async function runOcr(jobId) {
       ocr = { ...ocr, responseId: targetedRetry.responseId, result: mergeOcrResults(ocr.result, targetedRetry.result) };
     }
     job.result = applyKnownSltaLabels(ocr.result);
+    if (job.evaluationDateOverride) job.result.evaluationDate = job.evaluationDateOverride;
     job.evaluationType = job.result.documentType || '帳票名不明';
     rebuildAssessmentGroups();
     job.rawResponseId = ocr.responseId;
@@ -975,6 +1072,73 @@ const server = http.createServer(async (req, res) => {
       const patient = { id: id('patient'), tenantId: identity.tenantId, name, facilityPatientId, birthDate: safeText(body.birthDate, 10), createdAt: now(), updatedAt: now() };
       db.patients.push(patient); await persist(); return sendJson(res, 201, publicPatient(patient, identity.tenantId));
     }
+    if (req.method === 'GET' && url.pathname === '/api/rehab-records') {
+      const patientId = safeText(url.searchParams.get('patientId'));
+      const patient = db.patients.find(candidate => candidate.tenantId === identity.tenantId && candidate.id === patientId);
+      if (!patient) return sendJson(res, 404, { error: '患者が見つかりません' });
+      const records = db.rehabRecords
+        .filter(record => record.tenantId === identity.tenantId && record.patientId === patientId)
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+        .map(publicRehabRecord);
+      return sendJson(res, 200, records);
+    }
+    if (req.method === 'GET' && url.pathname === '/api/patients/pre-rehab-summary') {
+      const patientId = safeText(url.searchParams.get('patientId'));
+      const patient = db.patients.find(candidate => candidate.tenantId === identity.tenantId && candidate.id === patientId);
+      if (!patient) return sendJson(res, 404, { error: '患者が見つかりません' });
+      const patientJobs = db.jobs.filter(job => job.tenantId === identity.tenantId && job.patientId === patientId);
+      const records = db.rehabRecords.filter(record => record.tenantId === identity.tenantId && record.patientId === patientId).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+      const latestRecord = records[0] || null;
+      const latestEvaluation = patientJobs.filter(job => job.result).sort((a, b) => jobClinicalSortKey(b).localeCompare(jobClinicalSortKey(a)))[0] || null;
+      return sendJson(res, 200, {
+        patient: publicPatient(patient, identity.tenantId),
+        latestRecord: latestRecord ? publicRehabRecord(latestRecord) : null,
+        pendingApprovalCount: records.filter(record => record.approvalStatus === 'PENDING').length,
+        trends: patientTrend(patientJobs),
+        ocrReview: ocrReviewSummary(patientJobs),
+        latestEvaluationDate: latestEvaluation ? jobEvaluationDate(latestEvaluation) : '',
+        latestEvaluationRecordedAt: latestEvaluation?.createdAt || null,
+      });
+    }
+    if (req.method === 'POST' && url.pathname === '/api/rehab-records') {
+      const body = await readJson(req);
+      const patient = db.patients.find(candidate => candidate.tenantId === identity.tenantId && candidate.id === body.patientId);
+      if (!patient) return sendJson(res, 400, { error: '患者を選択してください' });
+      const intervention = safeText(body.intervention, 4000);
+      const outcome = safeText(body.outcome, 4000);
+      if (!intervention || !outcome) return sendJson(res, 400, { error: '実施内容と実施後所見は必須です' });
+      const timestamp = now();
+      const therapistName = safeText(body.therapistName || identity.hospitalName || identity.userId, 200);
+      const record = {
+        id: id('rehab'), tenantId: identity.tenantId, patientId: patient.id,
+        evaluationJobId: db.jobs.some(job => job.tenantId === identity.tenantId && job.patientId === patient.id && job.id === body.evaluationJobId) ? body.evaluationJobId : null,
+        recordType: ['INITIAL', 'FOLLOW_UP', 'DISCHARGE'].includes(body.recordType) ? body.recordType : 'FOLLOW_UP',
+        therapistName,
+        preCondition: safeText(body.preCondition, 2000), intervention,
+        durationMinutes: Number.isFinite(Number(body.durationMinutes)) ? Math.max(0, Math.min(1440, Number(body.durationMinutes))) : null,
+        assistanceLevel: safeText(body.assistanceLevel, 100),
+        painBefore: Number.isFinite(Number(body.painBefore)) ? Math.max(0, Math.min(10, Number(body.painBefore))) : null,
+        painAfter: Number.isFinite(Number(body.painAfter)) ? Math.max(0, Math.min(10, Number(body.painAfter))) : null,
+        fatigueBefore: Number.isFinite(Number(body.fatigueBefore)) ? Math.max(0, Math.min(10, Number(body.fatigueBefore))) : null,
+        fatigueAfter: Number.isFinite(Number(body.fatigueAfter)) ? Math.max(0, Math.min(10, Number(body.fatigueAfter))) : null,
+        outcome, nextPlan: safeText(body.nextPlan, 2000), riskNotes: safeText(body.riskNotes, 2000),
+        approvalStatus: 'APPROVED',
+        approvedBy: therapistName,
+        approvedAt: timestamp,
+        createdAt: timestamp, updatedAt: timestamp, revisions: [],
+      };
+      db.rehabRecords.push(record);
+      await persist();
+      return sendJson(res, 201, publicRehabRecord(record));
+    }
+    const deleteRehabRecordMatch = /^\/api\/rehab-records\/([^/]+)$/.exec(url.pathname);
+    if (req.method === 'DELETE' && deleteRehabRecordMatch) {
+      const index = db.rehabRecords.findIndex(record => record.tenantId === identity.tenantId && record.id === deleteRehabRecordMatch[1]);
+      if (index < 0) return sendJson(res, 404, { error: '経過記録が見つかりません' });
+      const [deletedRecord] = db.rehabRecords.splice(index, 1);
+      await persist();
+      return sendJson(res, 200, { deletedId: deletedRecord.id, patientId: deletedRecord.patientId });
+    }
     if (req.method === 'GET' && url.pathname === '/api/jobs') {
       const patientId = safeText(url.searchParams.get('patientId'));
       const jobs = db.jobs.filter(j => j.tenantId === identity.tenantId && (!patientId || j.patientId === patientId)).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map(jobView);
@@ -1000,7 +1164,9 @@ const server = http.createServer(async (req, res) => {
       const sourceFileName = safeText(body.fileName, 240);
       const pageNumber = Math.max(0, Math.min(99, Number(body.pageNumber) || 0)) || null;
       const ocrRoute = inferOcrRoute(sourceFileName, pageNumber);
-      const job = { id: jobId, tenantId: identity.tenantId, patientId: patient.id, evaluationType: ocrRoute.testType ? '帳票確認中' : '帳票判定中', status: 'REQUEST', imageFile, imageType: image.mime, sourceFileName, pageNumber, ocrRoute, result: null, confirmedResult: null, error: null, createdAt: now(), updatedAt: now(), confirmedAt: null };
+      const evaluationDateOverride = /^\d{4}-\d{2}-\d{2}$/.test(String(body.evaluationDateOverride || '')) ? String(body.evaluationDateOverride) : '';
+      const therapistName = safeText(body.therapistName || identity.hospitalName || identity.userId, 200);
+      const job = { id: jobId, tenantId: identity.tenantId, patientId: patient.id, therapistName, evaluationType: ocrRoute.testType ? '帳票確認中' : '帳票判定中', status: 'REQUEST', imageFile, imageType: image.mime, sourceFileName, pageNumber, evaluationDateOverride, ocrRoute, result: null, confirmedResult: null, error: null, createdAt: now(), updatedAt: now(), confirmedAt: null };
       db.jobs.push(job); await persist(); setImmediate(() => runOcr(job.id)); return sendJson(res, 202, jobView(job));
       }
       const jobMatch = /^\/api\/jobs\/([^/]+)$/.exec(url.pathname);
@@ -1038,8 +1204,9 @@ const server = http.createServer(async (req, res) => {
       if (!job.result || !['OCR_DONE', 'DONE'].includes(job.status)) return sendJson(res, 409, { error: 'OCR完了後のシートを退院にしてください' });
       const sameSheetJobs = db.jobs
         .filter(candidate => candidate.tenantId === identity.tenantId && candidate.patientId === job.patientId && candidate.evaluationType === job.evaluationType && candidate.result && ['OCR_DONE', 'DONE'].includes(candidate.status))
-        .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-      if (sameSheetJobs[0]?.id !== job.id) return sendJson(res, 409, { error: '最新のシートだけを退院にできます' });
+        .sort((a, b) => jobClinicalSortKey(b).localeCompare(jobClinicalSortKey(a)));
+      const latestAssessmentKey = sameSheetJobs[0]?.assessmentGroupId || sameSheetJobs[0]?.id;
+      if ((job.assessmentGroupId || job.id) !== latestAssessmentKey) return sendJson(res, 409, { error: '評価実施日が最新のシートだけを退院にできます' });
       job.careStage = 'DISCHARGE';
       job.dischargedAt = now();
       job.updatedAt = job.dischargedAt;
@@ -1051,7 +1218,7 @@ const server = http.createServer(async (req, res) => {
       const job = db.jobs.find(candidate => candidate.tenantId === identity.tenantId && candidate.id === undoDischargeMatch[1]);
       if (!job) return sendJson(res, 404, { error: 'OCR履歴が見つかりません' });
       if (job.careStage !== 'DISCHARGE') return sendJson(res, 409, { error: '退院状態のシートだけを途中経過に戻せます' });
-      const previousJobs = db.jobs.filter(candidate => candidate.tenantId === identity.tenantId && candidate.patientId === job.patientId && candidate.evaluationType === job.evaluationType && candidate.id !== job.id && candidate.result && candidate.createdAt < job.createdAt);
+      const previousJobs = db.jobs.filter(candidate => candidate.tenantId === identity.tenantId && candidate.patientId === job.patientId && candidate.evaluationType === job.evaluationType && candidate.id !== job.id && candidate.result && (!job.assessmentGroupId || candidate.assessmentGroupId !== job.assessmentGroupId) && jobClinicalSortKey(candidate) < jobClinicalSortKey(job));
       if (!previousJobs.length) return sendJson(res, 409, { error: '前回記録がないため途中経過には戻せません' });
       job.careStage = 'FOLLOW_UP';
       delete job.dischargedAt;

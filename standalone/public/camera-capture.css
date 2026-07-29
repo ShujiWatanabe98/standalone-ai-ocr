@@ -7,6 +7,159 @@
   grid-template-columns: max-content max-content minmax(0, 1fr);
 }
 
+/* Capture setup: keep source, patient and date controls from competing for space. */
+.capture-controls {
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
+  gap: 14px;
+}
+
+.photo-control {
+  min-width: 0;
+}
+
+.photo-input-row {
+  display: grid;
+  grid-template-columns: minmax(112px, auto) minmax(112px, auto) minmax(190px, 1fr) minmax(180px, .85fr) minmax(220px, .9fr);
+  align-items: end;
+  gap: 10px;
+  min-width: 0;
+}
+
+.camera-open-button,
+.photo-control .image-select-button {
+  width: 100%;
+  min-width: 112px;
+  min-height: 44px;
+}
+
+.photo-control .patient-search-input,
+.photo-control .therapist-search-input {
+  width: 100%;
+  min-width: 0;
+  height: 44px;
+}
+
+.photo-control .evaluation-date-override {
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+}
+
+.photo-control .evaluation-date-override input {
+  width: 100%;
+  min-width: 0;
+  height: 44px;
+}
+
+.start-control {
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+@media (max-width: 1040px) {
+  .photo-input-row {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .photo-control .patient-search-input,
+  .photo-control .therapist-search-input,
+  .photo-control .evaluation-date-override {
+    grid-column: auto;
+  }
+}
+
+@media (max-width: 600px) {
+  .photo-input-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .camera-open-button,
+  .photo-control .image-select-button,
+  .photo-control .patient-search-input,
+  .photo-control .evaluation-date-override,
+  .photo-control .evaluation-date-override input {
+    width: 100%;
+    max-width: none;
+  }
+
+  .start-control {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .image-correct-button {
+    grid-column: 1 / -1;
+    grid-row: 1;
+  }
+
+  .start-control .compact-ocr-button {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .capture-stop-button {
+    grid-column: 2;
+    grid-row: 2;
+  }
+
+  .ocr-progress {
+    grid-column: 1 / -1;
+    grid-row: 3;
+  }
+
+  .start-control small {
+    grid-column: 1 / -1;
+    grid-row: 4;
+  }
+
+  .supported-sheets {
+    grid-column: 1 / -1;
+    grid-row: 5;
+  }
+}
+
+/* Final capture-row layout: datalists must not consume grid tracks. */
+.photo-input-row {
+  grid-template-columns: minmax(112px, .65fr) minmax(112px, .65fr) minmax(190px, 1.2fr) minmax(180px, 1fr) minmax(220px, 1.05fr);
+}
+
+.photo-input-row > datalist {
+  display: none;
+}
+
+.photo-control .therapist-search-input {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  height: 44px;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: #333;
+  font-size: 13px;
+}
+
+.photo-control .therapist-search-input:focus {
+  outline: 2px solid #4b77d4;
+  outline-offset: 1px;
+  border-color: #4b77d4;
+}
+
+@media (max-width: 1040px) {
+  .photo-input-row {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 600px) {
+  .photo-input-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .camera-open-button {
   min-height: 38px;
   margin: 0;
@@ -259,5 +412,28 @@ body:has(.camera-dialog[open]) {
 
   .camera-dialog {
     width: 100%;
+  }
+}
+
+/* Final capture-button alignment override (keep after legacy camera rules). */
+.photo-input-row > .camera-open-button,
+.photo-input-row > .image-select-button {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 112px;
+  height: 44px;
+  min-height: 44px;
+  margin: 0;
+  padding: 0 12px;
+  line-height: 42px;
+}
+
+@media (max-width: 600px) {
+  .photo-input-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .photo-control .patient-search-input {
+    grid-column: auto;
   }
 }

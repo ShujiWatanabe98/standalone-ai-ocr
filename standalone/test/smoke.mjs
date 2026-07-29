@@ -27,6 +27,11 @@ const captureHtml = await readFile(new URL('../public/index.html', import.meta.u
 assert.match(captureHtml, /id="imageInput"[^>]*accept="image\/\*,application\/pdf,\.pdf"[^>]*multiple/);
 assert.doesNotMatch(captureHtml, /id="imageInput"[^>]*capture=/);
 assert.match(captureHtml, /id="patientSheetTimeline"/);
+assert.match(captureHtml, /患者リハビリ履歴/);
+assert.match(captureHtml, /id="evaluationDateOverride"/);
+assert.match(captureHtml, /id="therapistSearch"/);
+assert.match(captureHtml, /id="therapistSearchList"/);
+assert.match(captureHtml, /評価実施日（過去の評価登録可能）/);
 assert.match(captureHtml, /id="refreshPatientSheets"/);
 assert.match(captureHtml, /id="deleteAllHistory"/);
 const captureApp = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
@@ -105,6 +110,23 @@ assert.match(captureApp, /optimizedValueControl\(field,'batch-field-value'\)/);
 assert.doesNotMatch(captureApp, /first-result-table/);
 assert.match(captureApp, /pdfjsLib\.getDocument/);
 assert.match(captureApp, /function renderPatientSheetTimeline\(\)/);
+assert.match(captureApp, /function renderClinicalFlow\(patientId\)/);
+assert.match(captureApp, /function clinicalEvaluationRuns\(jobs\)/);
+assert.match(captureApp, /ページ・1回の評価/);
+assert.match(captureApp, /function clinicalEvaluationDate\(job\)/);
+assert.match(captureApp, /評価日不明/);
+assert.match(captureApp, /evaluationDateOverride/);
+assert.match(captureApp, /therapistName=selectedTherapistName\(\)/);
+assert.match(captureApp, /evaluationDateOverride'\)\.value=todayValue\(\)/);
+assert.match(serverSource, /jobEvaluationDate/);
+assert.match(serverSource, /evaluationDateOverride/);
+assert.match(captureApp, /\/api\/rehab-records/);
+assert.doesNotMatch(captureApp, /id="patientClinicalFlow"/);
+assert.doesNotMatch(captureApp, /今回の記録を追加|rehabRecordForm/);
+assert.match(serverSource, /rehabRecords/);
+assert.match(serverSource, /pre-rehab-summary/);
+assert.doesNotMatch(captureApp, /THERAPIST_LEVELS|therapistFeatures|療法士区分/);
+assert.match(serverSource, /therapistName/);
 assert.match(captureApp, /state\.selectedPatientTimelineId=ocrPatientId/);
 assert.match(captureApp, /患者欄にも追加しました/);
 assert.match(captureApp, /careStageLabel/);
@@ -114,6 +136,7 @@ assert.match(captureApp, /data-delete-job/);
 assert.match(serverSource, /deletedId/);
 assert.match(captureApp, /途中経過に戻す/);
 assert.match(captureApp, /summaryDischarge/);
+assert.doesNotMatch(captureApp, /id="summaryDischarge"/);
 assert.match(captureApp, /summaryUndoDischarge/);
 assert.match(captureApp, /switchSummaryCareStage/);
 assert.match(captureApp, /alreadyDischarged/);
@@ -220,6 +243,42 @@ const patientResponse = await fetch(`${base}/api/patients`, { method: 'POST', he
 assert.equal(patientResponse.status, 201);
 const patient = await patientResponse.json();
 assert.match(patient.id, /^patient_/);
+const rehabRecordResponse = await fetch(`${base}/api/rehab-records`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json', Authorization: auth },
+  body: JSON.stringify({
+    patientId: patient.id,
+    therapistName: '療法士テスト',
+    preCondition: '開始時安定',
+    intervention: '立位練習',
+    durationMinutes: 20,
+    assistanceLevel: '見守り',
+    painBefore: 1,
+    painAfter: 1,
+    fatigueBefore: 2,
+    fatigueAfter: 4,
+    outcome: '見守りで完遂',
+    nextPlan: '歩行へ進む',
+    riskNotes: '転倒注意',
+  }),
+});
+assert.equal(rehabRecordResponse.status, 201);
+const rehabRecord = await rehabRecordResponse.json();
+assert.equal(rehabRecord.approvalStatus, 'APPROVED');
+const rehabRecords = await fetch(`${base}/api/rehab-records?patientId=${patient.id}`, { headers: { Authorization: auth } }).then(r => r.json());
+assert.equal(rehabRecords.length, 1);
+assert.equal(rehabRecords[0].outcome, '見守りで完遂');
+const preRehabSummary = await fetch(`${base}/api/patients/pre-rehab-summary?patientId=${patient.id}`, { headers: { Authorization: auth } }).then(r => r.json());
+assert.equal(preRehabSummary.pendingApprovalCount, 0);
+const deleteRehabRecordResponse = await fetch(`${base}/api/rehab-records/${rehabRecord.id}`, {
+  method: 'DELETE',
+  headers: { 'Content-Type': 'application/json', Authorization: auth },
+  body: '{}',
+});
+assert.equal(deleteRehabRecordResponse.status, 200);
+assert.equal((await deleteRehabRecordResponse.json()).deletedId, rehabRecord.id);
+const rehabRecordsAfterDelete = await fetch(`${base}/api/rehab-records?patientId=${patient.id}`, { headers: { Authorization: auth } }).then(r => r.json());
+assert.equal(rehabRecordsAfterDelete.length, 0);
 const patients = await fetch(`${base}/api/patients`, { headers: { Authorization: auth } }).then(r => r.json());
 assert.equal(patients.length, 1);
 assert.equal(patients[0].name, 'テスト患者');
