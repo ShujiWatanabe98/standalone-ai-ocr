@@ -77,17 +77,17 @@ export const REHAINFO_OCR_DEFINITIONS = {
   SLTA_ALL: {
     documentType: 'SLTA（標準失語症検査）',
     dynamicPrefix: '#',
-    instruction: 'rehainfoのSLTA_1〜SLTA_12と同じ「6段階評価」「正答数」「所要時間」の記入セルを対象とし、グローバル#番号をidに使う。全ページで「問題および反応」欄のテキストも読み取る。',
+    instruction: '既存7セット・計84画像と照合し、SLTA_1〜SLTA_12の印刷ページ番号を優先して判定する。「6段階評価」「正答数」「所要時間」の記入セルを対象とし、グローバル#番号をidに使う。全ページで「問題および反応」欄のテキストも読み取る。',
   },
   BIT: {
     documentType: 'BIT（行動性無視検査）',
     dynamicPrefix: 'BIT_',
-    instruction: 'rehainfoのBIT_1〜BIT_7と同じ結果欄（見落とし数、誤り数、所要時間、得点）だけを読み取る。問題文と患者の自由記載は対象外。idはBIT_<ページ>_<項目番号>とする。',
+    instruction: '既存PDFで確認した固定構成（1=通常検査得点、2=行動検査得点+写真課題、3=電話課題+メニュー課題、4=音読課題、5=時計課題+硬貨課題、6=書写課題+地図課題、7=トランプ課題）からページを判定する。結果欄（見落とし数、誤り数、所要時間、得点）だけを読み取り、問題文と患者の自由記載は対象外。idはBIT_<ページ>_<項目番号>とする。',
   },
   CAT_R_ALL: {
     documentType: 'CAT-R（標準注意検査法）',
     dynamicPrefix: 'CAT_R_',
-    instruction: 'CAT-Rの1〜5ページを判定し、印刷された項目名に対応する手書き結果だけを読む。対象はDigit Span/Tapping Span、視覚性抹消課題の正答数・fn・fp・所要時間、聴覚性検出課題、記憶更新検査、PASATの正答数・正答率。idはCAT_R_<ページ>_<上からの項目番号>とする。',
+    instruction: 'CAT-Rの固定構成（1=Span、2=視覚性抹消課題、3=聴覚性検出課題、4=Memory Updating Test、5=PASAT）からページを判定し、印刷された項目名に対応する手書き結果だけを読む。対象はDigit Span/Tapping Span、視覚性抹消課題の正答数・fn・fp・所要時間、聴覚性検出課題、記憶更新検査、PASATの正答数・正答率。idはCAT_R_<ページ>_<上からの項目番号>とする。',
   },
   WAIS_IV_ALL: {
     documentType: 'WAIS-IV（ウェクスラー成人知能検査）',
@@ -97,7 +97,7 @@ export const REHAINFO_OCR_DEFINITIONS = {
   WMSR_ALL: {
     documentType: 'WMS-R（ウェクスラー記憶検査）',
     dynamicPrefix: 'WMSR_',
-    instruction: 'WMS-Rの1〜9ページを判定し、各下位検査の手書き結果欄（回答、得点、正答数、再生数、所要時間、合計値）を読む。問題文そのものは転記しない。idはWMSR_<ページ>_<上からの項目番号>とする。',
+    instruction: 'WMS-Rは印刷ページ3〜11を内部ページ1〜9へ変換する。固定構成は1=情報と見当識、2=精神統制+図形の記憶、3=論理的記憶I、4=視覚性対連合I、5=言語性対連合I+視覚性再生I、6=数唱+視覚性記憶範囲、7=論理的記憶II、8=視覚性対連合II+言語性対連合II+視覚性再生II、9=成績集計表。各下位検査の手書き結果欄（回答、得点、正答数、再生数、所要時間、合計値）を読み、問題文そのものは転記しない。idはWMSR_<内部ページ>_<上からの項目番号>とする。',
   },
 };
 
@@ -437,12 +437,13 @@ export function inferOcrRoute(fileName = '', pageNumber = null) {
   else if (/FMA[\s_-]?(?:UE|UPPER)/.test(name)) testType = 'FMA_1';
   else if (/\bBBS\b/.test(name)) testType = 'BBS';
   else if (/\bBIT/.test(name)) testType = 'BIT';
-  else if (/\bSLTA\b/.test(name)) testType = 'SLTA_ALL';
+  else if (/(?:^|[^A-Z0-9])SLTA(?:\d+)?(?:[_-]|$)/.test(name)) testType = 'SLTA_ALL';
   else if (/\bSTEF\b/.test(name)) testType = 'STEF';
   else if (/KOHS|KOH[S]?|コース|立方体/.test(name)) testType = 'KOHS_1';
-  if (testType === 'WAIS_IV_ALL' && !page) {
+  if (['WAIS_IV_ALL', 'SLTA_ALL'].includes(testType) && !page) {
     const filePage = Number(name.match(/[_-](0?[1-9]|1[0-3])(?:\.[A-Z0-9]+)?$/)?.[1]);
-    if (filePage >= 1 && filePage <= 13) page = filePage;
+    const maxPage = testType === 'SLTA_ALL' ? 12 : 13;
+    if (filePage >= 1 && filePage <= maxPage) page = filePage;
   }
   return { testType, page };
 }

@@ -567,20 +567,29 @@ testType は次のいずれかです:
 FMA_1, FMA_2, BBS, KOHS_1, STEF, SLTA_ALL, BIT, CAT_R_ALL, WAIS_IV_ALL, WMSR_ALL, UNSUPPORTED
 
 実資料に基づく識別特徴:
-- FMA_1: 上部に "Fugl-Meyer Assessment (FMA)" と上肢を示す表題。縦長で、多数の運動項目が並ぶ1枚の表。下肢と混同しない。
-- FMA_2: 上部に "Fugl-Meyer Assessment (FMA)" と下肢を示す表題。縦長で、上肢版より項目数が少ない1枚の表。
-- BBS: "Berg Balance Scale" またはBBS。14のバランス課題が左右2列に並ぶ縦長の採点表。
+- FMA_1: 上部に "Fugl-Meyer Assessment (FMA)" と上肢を示す表題。縦長で33結果欄、上肢運動合計66点の構成。下肢と混同しない。
+- FMA_2: 上部に "Fugl-Meyer Assessment (FMA)" と下肢を示す表題。縦長で17結果欄、下肢運動合計34点の構成。上肢版より項目数が少ない。
+- BBS: "Berg Balance Scale" またはBBS。14のバランス課題が左右2列に並び、各0〜4点、合計56点の縦長採点表。
 - KOHS_1: コース立方体組み合わせテスト。左列に立方体模様の図版が縦に並ぶ採点表。
-- STEF: "STEF" または簡易上肢機能検査。横長で、左右・回数・時間などの数値欄が密集した大きな格子表。
-- SLTA_ALL: "標準失語症検査" またはSLTA。縦長で、問題番号と反応記録欄が左右に並ぶ。1〜12ページ。
-- BIT: "BIT", "Behavioural Inattention Test" または行動性無視検査。線分抹消、文字抹消、星印抹消、模写、線分二等分、描画などの下位検査。表紙を除く1〜7ページ。
-- CAT_R_ALL: "CAT-R", "Clinical Assessment for Attention"。Span、抹消課題、PASATなど英語の下位検査名を含む。1〜5ページ。
+- STEF: "STEF" または簡易上肢機能検査。横長で10検査×左右、計20の所要時間欄が密集した大きな格子表。
+- SLTA_ALL: "標準失語症検査" またはSLTA。既存7セット・計84画像で確認済み。縦長で「問題および反応」と6段階評価欄があり、印刷ページ番号1〜12を優先する。
+- BIT: "BIT", "Behavioural Inattention Test" または行動性無視検査。既存7セットの編集済みPDFで次の対応を確認済み。
+  1=通常検査得点、2=行動検査得点+写真課題、3=電話課題+メニュー課題、4=音読課題、
+  5=時計課題+硬貨課題、6=書写課題+地図課題、7=トランプ課題。
+- CAT_R_ALL: "CAT-R", "Clinical Assessment for Attention"。既存7セットのPDFで次の対応を確認済み。
+  1=Span、2=Cancellation and Detection Testの視覚性抹消課題、3=聴覚性検出課題、
+  4=Memory Updating Test、5=Paced Auditory Serial Addition Test (PASAT)。
 - WAIS_IV_ALL: "WAIS-IV"。追加された5セット・計65画像で、次のページ対応を確認済み。
   1=積木模様、2=類似、3=数唱、4=数唱後半+行列推理、5=単語前半、6=単語後半、
   7=算数+記号探し、8=パズル+知識前半、9=知識後半+符号、10=語音整列、
   11=バランス+理解前半、12=理解後半、13=絵の抹消+絵の完成。
   各ページ右下の印刷ページ番号1〜13と、この下位検査構成が一致することを確認する。
-- WMSR_ALL: "WMS-R"。ウェクスラー記憶検査の記録用紙で、論理的記憶、視覚性再生、言語性対連合などの記録欄。空白のPDF末尾ページは対象外で1〜9ページ。
+- WMSR_ALL: "WMS-R"。既存7セットのPDFで次の内部ページ対応を確認済み。
+  1=情報と見当識（印刷3）、2=精神統制+図形の記憶（印刷4）、3=論理的記憶I（印刷5）、
+  4=視覚性対連合I（印刷6）、5=言語性対連合I+視覚性再生I（印刷7）、
+  6=数唱+視覚性記憶範囲（印刷8）、7=論理的記憶II（印刷9）、
+  8=視覚性対連合II+言語性対連合II+視覚性再生II（印刷10）、9=成績集計表（印刷11）。
+  WMS-Rだけは印刷ページ番号から2を引いた値を page として返す。空白のPDF末尾ページは対象外。
 
 ページ判定規則:
 - 印刷されたページ番号が見える場合は必ず最優先する。
@@ -620,7 +629,7 @@ JSON以外を返さないでください。
       model,
       store: false,
       reasoning: { effort: 'low' },
-      prompt_cache_key: 'rehainfo-sheet-detection-v3-wais-images',
+      prompt_cache_key: 'rehainfo-sheet-detection-v4-all-reference-forms',
       input: [{ role: 'user', content: [{ type: 'input_text', text: sheetDetectionReferencePrompt }, { type: 'input_image', image_url: imageUrl, detail: 'high' }] }],
     }),
     signal: AbortSignal.timeout(45000),
