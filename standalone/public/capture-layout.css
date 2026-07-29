@@ -3,7 +3,6 @@
 }
 
 .brand-title{display:flex;align-items:center;gap:9px}.header-logout{margin-left:8px;border-color:#fff;background:transparent;color:#fff;padding:7px 12px;font-size:12px}.header-logout:hover:not(:disabled){background:#fff;color:var(--reha-main)}.ai-indicator{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border:2px solid #9ec4c9;border-radius:50%;background:#234e5c;color:#d8ecee;font-size:11px;font-weight:900;box-shadow:0 0 0 3px #ffffff16}.ai-indicator.active{border-color:#fff;background:#e12222;color:#fff;animation:ai-pulse .8s ease-in-out infinite}@keyframes ai-pulse{0%,100%{opacity:1;box-shadow:0 0 0 2px #ff626255}50%{opacity:.35;box-shadow:0 0 0 8px #ff303011}}
-.dev-cache-clear{border-color:#ffd66b;background:#fff8dc;color:#665000;padding:7px 11px;font-size:11px}.dev-cache-clear:hover:not(:disabled){border-color:#ffd66b;background:#ffd66b;color:#332700}
 
 header nav {
   display: flex;
