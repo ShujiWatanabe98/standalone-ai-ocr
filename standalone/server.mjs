@@ -558,6 +558,36 @@ function validateDetectedSheetSet(detections) {
   };
 }
 
+const sheetDetectionReferencePrompt = `あなたはリハビリテーション評価用紙の画像分類担当です。
+この判定基準は、リポジトリ内 aiocr フォルダに保存された実際の画像・PDFの固定印刷部分とレイアウトを確認して作成しています。
+
+患者名、日付、点数、手書き文字は分類根拠にしないでください。印刷された帳票名、検査名、固定見出し、項目構成、ページ番号を優先してください。
+
+testType は次のいずれかです:
+FMA_1, FMA_2, BBS, KOHS_1, STEF, SLTA_ALL, BIT, CAT_R_ALL, WAIS_IV_ALL, WMSR_ALL, UNSUPPORTED
+
+実資料に基づく識別特徴:
+- FMA_1: 上部に "Fugl-Meyer Assessment (FMA)" と上肢を示す表題。縦長で、多数の運動項目が並ぶ1枚の表。下肢と混同しない。
+- FMA_2: 上部に "Fugl-Meyer Assessment (FMA)" と下肢を示す表題。縦長で、上肢版より項目数が少ない1枚の表。
+- BBS: "Berg Balance Scale" またはBBS。14のバランス課題が左右2列に並ぶ縦長の採点表。
+- KOHS_1: コース立方体組み合わせテスト。左列に立方体模様の図版が縦に並ぶ採点表。
+- STEF: "STEF" または簡易上肢機能検査。横長で、左右・回数・時間などの数値欄が密集した大きな格子表。
+- SLTA_ALL: "標準失語症検査" またはSLTA。縦長で、問題番号と反応記録欄が左右に並ぶ。1〜12ページ。
+- BIT: "BIT", "Behavioural Inattention Test" または行動性無視検査。線分抹消、文字抹消、星印抹消、模写、線分二等分、描画などの下位検査。表紙を除く1〜7ページ。
+- CAT_R_ALL: "CAT-R", "Clinical Assessment for Attention"。Span、抹消課題、PASATなど英語の下位検査名を含む。1〜5ページ。
+- WAIS_IV_ALL: "WAIS-IV"。積木模様、類似、数唱、行列推理、語彙、算数、記号探し、符号など、番号付き下位検査の記録欄。1〜13ページ。
+- WMSR_ALL: "WMS-R"。ウェクスラー記憶検査の記録用紙で、論理的記憶、視覚性再生、言語性対連合などの記録欄。空白のPDF末尾ページは対象外で1〜9ページ。
+
+ページ判定規則:
+- 印刷されたページ番号が見える場合は必ず最優先する。
+- 設問番号、項目番号、得点、患者ID、手書きの数字をページ番号として扱わない。
+- ページ番号が見えない場合だけ、固定見出しとレイアウトから推定する。
+- 複数ページ帳票でページを確定できない場合は page を null にする。
+- 帳票名と固定構造が一致しない、または確信が弱い場合は UNSUPPORTED にする。
+
+次のJSONだけを返してください:
+{"testType":"BBS","page":null,"confidence":0.95}`;
+
 async function detectEvaluationSheet(apiKey, imageUrl) {
   const prompt = `あなたはリハビリテーション評価シートの画像分類器です。
 画像に写っている用紙の印刷タイトル、項目名、表レイアウト、ページ番号から帳票を判定してください。
@@ -586,8 +616,8 @@ JSON以外を返さないでください。
       model,
       store: false,
       reasoning: { effort: 'low' },
-      prompt_cache_key: 'rehainfo-sheet-detection-v1',
-      input: [{ role: 'user', content: [{ type: 'input_text', text: prompt }, { type: 'input_image', image_url: imageUrl, detail: 'low' }] }],
+      prompt_cache_key: 'rehainfo-sheet-detection-v2-aiocr-reference',
+      input: [{ role: 'user', content: [{ type: 'input_text', text: sheetDetectionReferencePrompt }, { type: 'input_image', image_url: imageUrl, detail: 'high' }] }],
     }),
     signal: AbortSignal.timeout(45000),
   });
@@ -599,7 +629,7 @@ JSON以外を返さないでください。
   const rawPage = Number(parsed.page);
   const maxPage = sheetPageRanges[testType] || null;
   const page = maxPage && Number.isInteger(rawPage) && rawPage >= 1 && rawPage <= maxPage ? rawPage : null;
-  const recognized = testType !== 'UNSUPPORTED' && confidence >= 0.55;
+  const recognized = testType !== 'UNSUPPORTED' && confidence >= 0.65;
   const baseName = recognized ? sheetDisplayNames[testType] : null;
   return {
     recognized,
