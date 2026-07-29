@@ -92,7 +92,7 @@ export const REHAINFO_OCR_DEFINITIONS = {
   WAIS_IV_ALL: {
     documentType: 'WAIS-IV（ウェクスラー成人知能検査）',
     dynamicPrefix: 'WAIS_IV_',
-    instruction: 'WAIS-IVの1〜13ページを判定し、各下位検査の手書き結果欄（回答、得点、所要時間、正答数、誤答数、最終得点）を読む。問題文そのものは転記しない。idはWAIS_IV_<ページ>_<上からの項目番号>とする。',
+    instruction: 'WAIS-IVの1〜13ページを判定する。追加実画像で確認した固定構成は、1=積木模様、2=類似、3=数唱、4=数唱後半+行列推理、5=単語前半、6=単語後半、7=算数+記号探し、8=パズル+知識前半、9=知識後半+符号、10=語音整列、11=バランス+理解前半、12=理解後半、13=絵の抹消+絵の完成。右下の印刷ページ番号と下位検査構成を照合し、各下位検査の手書き結果欄（回答、得点、所要時間、正答数、誤答数、最終得点）を読む。問題文そのものは転記しない。idはWAIS_IV_<ページ>_<上からの項目番号>とする。',
   },
   WMSR_ALL: {
     documentType: 'WMS-R（ウェクスラー記憶検査）',
@@ -428,7 +428,7 @@ ${JSON.stringify({ testType: 'WAIS_IV_ALL', documentType: 'WAIS-IV（ウェク�
 
 export function inferOcrRoute(fileName = '', pageNumber = null) {
   const name = String(fileName).normalize('NFKC').toUpperCase();
-  const page = Number(pageNumber) || Number(name.match(/[（(](\d+)ページ[）)]/)?.[1]) || null;
+  let page = Number(pageNumber) || Number(name.match(/[（(](\d+)ページ[）)]/)?.[1]) || null;
   let testType = null;
   if (/CAT[\s_-]?R/.test(name)) testType = 'CAT_R_ALL';
   else if (/WAIS[\s_-]?IV/.test(name)) testType = 'WAIS_IV_ALL';
@@ -440,6 +440,10 @@ export function inferOcrRoute(fileName = '', pageNumber = null) {
   else if (/\bSLTA\b/.test(name)) testType = 'SLTA_ALL';
   else if (/\bSTEF\b/.test(name)) testType = 'STEF';
   else if (/KOHS|KOH[S]?|コース|立方体/.test(name)) testType = 'KOHS_1';
+  if (testType === 'WAIS_IV_ALL' && !page) {
+    const filePage = Number(name.match(/[_-](0?[1-9]|1[0-3])(?:\.[A-Z0-9]+)?$/)?.[1]);
+    if (filePage >= 1 && filePage <= 13) page = filePage;
+  }
   return { testType, page };
 }
 

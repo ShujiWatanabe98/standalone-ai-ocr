@@ -575,7 +575,11 @@ FMA_1, FMA_2, BBS, KOHS_1, STEF, SLTA_ALL, BIT, CAT_R_ALL, WAIS_IV_ALL, WMSR_ALL
 - SLTA_ALL: "標準失語症検査" またはSLTA。縦長で、問題番号と反応記録欄が左右に並ぶ。1〜12ページ。
 - BIT: "BIT", "Behavioural Inattention Test" または行動性無視検査。線分抹消、文字抹消、星印抹消、模写、線分二等分、描画などの下位検査。表紙を除く1〜7ページ。
 - CAT_R_ALL: "CAT-R", "Clinical Assessment for Attention"。Span、抹消課題、PASATなど英語の下位検査名を含む。1〜5ページ。
-- WAIS_IV_ALL: "WAIS-IV"。積木模様、類似、数唱、行列推理、語彙、算数、記号探し、符号など、番号付き下位検査の記録欄。1〜13ページ。
+- WAIS_IV_ALL: "WAIS-IV"。追加された5セット・計65画像で、次のページ対応を確認済み。
+  1=積木模様、2=類似、3=数唱、4=数唱後半+行列推理、5=単語前半、6=単語後半、
+  7=算数+記号探し、8=パズル+知識前半、9=知識後半+符号、10=語音整列、
+  11=バランス+理解前半、12=理解後半、13=絵の抹消+絵の完成。
+  各ページ右下の印刷ページ番号1〜13と、この下位検査構成が一致することを確認する。
 - WMSR_ALL: "WMS-R"。ウェクスラー記憶検査の記録用紙で、論理的記憶、視覚性再生、言語性対連合などの記録欄。空白のPDF末尾ページは対象外で1〜9ページ。
 
 ページ判定規則:
@@ -616,7 +620,7 @@ JSON以外を返さないでください。
       model,
       store: false,
       reasoning: { effort: 'low' },
-      prompt_cache_key: 'rehainfo-sheet-detection-v2-aiocr-reference',
+      prompt_cache_key: 'rehainfo-sheet-detection-v3-wais-images',
       input: [{ role: 'user', content: [{ type: 'input_text', text: sheetDetectionReferencePrompt }, { type: 'input_image', image_url: imageUrl, detail: 'high' }] }],
     }),
     signal: AbortSignal.timeout(45000),
