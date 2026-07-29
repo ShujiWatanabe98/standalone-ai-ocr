@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="/styles.css?v=20260729-past-evaluation-1">
   <link rel="stylesheet" href="/capture-layout.css?v=20260729-remove-cache-clear-1">
   <link rel="stylesheet" href="/patient-timeline.css?v=20260729-rehab-record-delete-1">
-  <link rel="stylesheet" href="/camera-capture.css?v=20260729-sheet-judgment-label-1">
+  <link rel="stylesheet" href="/camera-capture.css?v=20260729-active-capture-slot-1">
 </head>
 <body>
   <header>
@@ -60,7 +60,11 @@
       </div>
     </section>
   </dialog>
+  <dialog id="cameraPreviewDialog" class="camera-preview-dialog" aria-label="撮影画像の確認">
+    <img id="cameraPreviewImage" alt="">
+    <button id="closeCameraPreviewButton" type="button">閉じる</button>
+  </dialog>
   <script type="module" src="/app.js?v=20260729-remove-cache-clear-1"></script>
-  <script type="module" src="/camera-capture.js?v=20260729-camera-auto-add-1"></script>
+  <script type="module" src="/camera-capture.js?v=20260729-active-capture-slot-1"></script>
 </body>
 </html>

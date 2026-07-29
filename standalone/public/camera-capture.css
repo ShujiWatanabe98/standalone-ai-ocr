@@ -261,6 +261,11 @@ body:has(.camera-dialog[open]) {
   color: #91a3aa;
 }
 
+.camera-capture-slot.active {
+  border: 2px solid #5fffd2;
+  box-shadow: 0 0 0 2px #5fffd255;
+}
+
 .camera-capture-slot > span {
   position: absolute;
   z-index: 2;
@@ -273,13 +278,27 @@ body:has(.camera-dialog[open]) {
   font-size: 8px;
 }
 
-.camera-capture-slot img {
+.camera-slot-select {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  min-height: 32px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+}
+
+.camera-slot-select img {
   width: 100%;
   height: 32px;
   object-fit: cover;
 }
 
-.camera-capture-slot button {
+.camera-capture-slot .camera-slot-remove {
   position: absolute;
   z-index: 3;
   top: 2px;
@@ -294,6 +313,33 @@ body:has(.camera-dialog[open]) {
   color: #fff;
   font-size: 11px;
   line-height: 14px;
+}
+
+.camera-preview-dialog {
+  width: min(94vw, 760px);
+  max-height: 94dvh;
+  padding: 12px;
+  border: 1px solid #ffffff55;
+  border-radius: 12px;
+  background: #081014;
+  color: #fff;
+}
+
+.camera-preview-dialog::backdrop {
+  background: #000c;
+}
+
+.camera-preview-dialog img {
+  display: block;
+  width: 100%;
+  max-height: calc(94dvh - 82px);
+  object-fit: contain;
+}
+
+.camera-preview-dialog button {
+  display: block;
+  min-width: 120px;
+  margin: 10px auto 0;
 }
 
 .camera-finish-button {

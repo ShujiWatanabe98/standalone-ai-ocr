@@ -10,37 +10,60 @@ const imageInput = document.querySelector('#imageInput');
 const sheetOverlay = document.querySelector('#cameraSheetOverlay');
 const captureSlots = document.querySelector('#cameraCaptureSlots');
 const captureCount = document.querySelector('#cameraCaptureCount');
+const previewDialog = document.querySelector('#cameraPreviewDialog');
+const previewImage = document.querySelector('#cameraPreviewImage');
+const closePreviewButton = document.querySelector('#closeCameraPreviewButton');
 
 let stream = null;
-let capturedSheets = [];
+const maxCameraCaptures = 12;
+let capturedSheets = Array(maxCameraCaptures).fill(null);
+let activeCaptureIndex = 0;
 let detectionController = null;
 let liveDetectionTimer = null;
 let liveDetectionActive = false;
-const maxCameraCaptures = 12;
+
+function capturedSheetCount() {
+  return capturedSheets.filter(Boolean).length;
+}
 
 function renderCaptureSheet() {
   if (!captureSlots) return;
-  captureCount.textContent = `${capturedSheets.length} / ${maxCameraCaptures}枚`;
+  const capturedCount = capturedSheetCount();
+  captureCount.textContent = `${capturedCount} / ${maxCameraCaptures}枚`;
   captureSlots.innerHTML = Array.from({ length: maxCameraCaptures }, (_, index) => {
     const item = capturedSheets[index];
     return item
-      ? `<article class="camera-capture-slot filled"><span>${index + 1}</span><img src="${item.url}" alt="${index + 1}枚目の撮影画像"><button type="button" data-remove-capture="${index}" aria-label="${index + 1}枚目を削除">×</button></article>`
-      : `<article class="camera-capture-slot"><span>${index + 1}</span><small>未撮影</small></article>`;
+      ? `<article class="camera-capture-slot filled${index === activeCaptureIndex ? ' active' : ''}"><span>${index + 1}</span><button class="camera-slot-select" type="button" data-select-capture="${index}" aria-label="${index + 1}枚目を選択して画像を表示"><img src="${item.url}" alt="${index + 1}枚目の撮影画像"></button><button class="camera-slot-remove" type="button" data-remove-capture="${index}" aria-label="${index + 1}枚目を削除">×</button></article>`
+      : `<article class="camera-capture-slot${index === activeCaptureIndex ? ' active' : ''}"><span>${index + 1}</span><button class="camera-slot-select" type="button" data-select-capture="${index}" aria-label="${index + 1}枚目を撮影先に選択"><small>未撮影</small></button></article>`;
   }).join('');
-  captureSlots.querySelectorAll('[data-remove-capture]').forEach(button => button.addEventListener('click', () => {
+  captureSlots.querySelectorAll('[data-select-capture]').forEach(button => button.addEventListener('click', () => {
+    activeCaptureIndex = Number(button.dataset.selectCapture);
+    const item = capturedSheets[activeCaptureIndex];
+    renderCaptureSheet();
+    if (item && previewDialog && previewImage) {
+      previewImage.src = item.url;
+      previewImage.alt = `${activeCaptureIndex + 1}枚目の撮影画像`;
+      previewDialog.showModal();
+    }
+  }));
+  captureSlots.querySelectorAll('[data-remove-capture]').forEach(button => button.addEventListener('click', event => {
+    event.stopPropagation();
     const index = Number(button.dataset.removeCapture);
-    const [removed] = capturedSheets.splice(index, 1);
+    const removed = capturedSheets[index];
+    capturedSheets[index] = null;
     if (removed?.url) URL.revokeObjectURL(removed.url);
+    activeCaptureIndex = index;
     shootButton.disabled = false;
     renderCaptureSheet();
-    status.textContent = `撮影済み ${capturedSheets.length} / ${maxCameraCaptures}枚`;
+    status.textContent = `撮影済み ${capturedSheetCount()} / ${maxCameraCaptures}枚`;
   }));
-  finishButton.hidden = capturedSheets.length === 0;
+  finishButton.hidden = capturedCount === 0;
 }
 
 function clearCaptureSheet() {
-  capturedSheets.forEach(item => URL.revokeObjectURL(item.url));
-  capturedSheets = [];
+  capturedSheets.filter(Boolean).forEach(item => URL.revokeObjectURL(item.url));
+  capturedSheets = Array(maxCameraCaptures).fill(null);
+  activeCaptureIndex = 0;
   renderCaptureSheet();
 }
 
@@ -195,7 +218,7 @@ function closeCamera() {
 }
 
 function captureFrame() {
-  if (!video.videoWidth || !video.videoHeight || capturedSheets.length >= maxCameraCaptures) return;
+  if (!video.videoWidth || !video.videoHeight) return;
   stopLiveDetection();
   shootButton.disabled = true;
   canvas.width = video.videoWidth;
@@ -211,25 +234,30 @@ function captureFrame() {
     }
     const file = new File(
       [blob],
-      `a4-camera-${String(capturedSheets.length + 1).padStart(2, '0')}-${new Date().toISOString().replace(/[:.]/g, '-')}.jpg`,
+      `a4-camera-${String(activeCaptureIndex + 1).padStart(2, '0')}-${new Date().toISOString().replace(/[:.]/g, '-')}.jpg`,
       { type: 'image/jpeg', lastModified: Date.now() }
     );
-    capturedSheets.push({ file, url: URL.createObjectURL(blob) });
+    const replaced = capturedSheets[activeCaptureIndex];
+    if (replaced?.url) URL.revokeObjectURL(replaced.url);
+    capturedSheets[activeCaptureIndex] = { file, url: URL.createObjectURL(blob) };
+    const nextEmptyIndex = capturedSheets.findIndex(item => !item);
+    if (nextEmptyIndex >= 0) activeCaptureIndex = nextEmptyIndex;
     renderCaptureSheet();
-    if (capturedSheets.length >= maxCameraCaptures) {
+    const capturedCount = capturedSheetCount();
+    if (capturedCount >= maxCameraCaptures) {
       status.textContent = '12枚撮影しました。「撮影した画像を使用」を押してください。';
     } else {
       shootButton.disabled = false;
-      status.textContent = `撮影済み ${capturedSheets.length} / ${maxCameraCaptures}枚。続けて撮影できます。`;
+      status.textContent = `撮影済み ${capturedCount} / ${maxCameraCaptures}枚。続けて撮影できます。`;
       startLiveDetection();
     }
   }, 'image/jpeg', 0.94);
 }
 
 function finishCaptures() {
-  if (!capturedSheets.length) return;
+  if (!capturedSheetCount()) return;
   const transfer = new DataTransfer();
-  capturedSheets.forEach(item => transfer.items.add(item.file));
+  capturedSheets.filter(Boolean).forEach(item => transfer.items.add(item.file));
   imageInput.files = transfer.files;
   imageInput.dispatchEvent(new Event('change', { bubbles: true }));
   closeCamera();
@@ -239,6 +267,7 @@ openButton?.addEventListener('click', openCamera);
 closeButton?.addEventListener('click', closeCamera);
 shootButton?.addEventListener('click', captureFrame);
 finishButton?.addEventListener('click', finishCaptures);
+closePreviewButton?.addEventListener('click', () => previewDialog?.close());
 cameraDialog?.addEventListener('cancel', event => {
   event.preventDefault();
   closeCamera();
