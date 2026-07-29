@@ -19,7 +19,7 @@
     <section id="view-capture" class="view active">
       <div class="panel capture-panel">
         <div class="capture-controls">
-          <div class="photo-control"><span class="photo-control-title">カメラ撮影・画像・PDF選択（最大12ページ）</span><div class="photo-input-row"><button id="openCameraButton" class="secondary camera-open-button" type="button">カメラ撮影</button><label class="secondary image-select-button">ファイル選択<input id="imageInput" type="file" accept="image/*,application/pdf,.pdf" multiple></label><input id="patientSearch" class="patient-search-input" type="search" list="patientSearchList" placeholder="患者を選択" aria-label="患者を選択" autocomplete="off"><datalist id="patientSearchList"></datalist><input id="therapistSearch" class="therapist-search-input" type="search" list="therapistSearchList" placeholder="療法士を選択" aria-label="療法士を選択" autocomplete="off"><datalist id="therapistSearchList"></datalist><label class="evaluation-date-override">評価実施日（過去の評価登録可能）<input id="evaluationDateOverride" type="date" aria-label="評価実施日（過去の評価登録可能）"></label></div></div>
+          <div class="photo-control"><span class="photo-control-title">カメラ撮影・画像・PDF選択（最大13ページ）</span><div class="photo-input-row"><button id="openCameraButton" class="secondary camera-open-button" type="button">カメラ撮影</button><label class="secondary image-select-button">ファイル選択<input id="imageInput" type="file" accept="image/*,application/pdf,.pdf" multiple></label><input id="patientSearch" class="patient-search-input" type="search" list="patientSearchList" placeholder="患者を選択" aria-label="患者を選択" autocomplete="off"><datalist id="patientSearchList"></datalist><input id="therapistSearch" class="therapist-search-input" type="search" list="therapistSearchList" placeholder="療法士を選択" aria-label="療法士を選択" autocomplete="off"><datalist id="therapistSearchList"></datalist><label class="evaluation-date-override">評価実施日（過去の評価登録可能）<input id="evaluationDateOverride" type="date" aria-label="評価実施日（過去の評価登録可能）"></label></div></div>
           <div class="start-control"><button id="correctionButton" class="secondary image-correct-button" disabled title="余白削除・縮小・画像補正を実行します">画像補正</button><button id="startButton" class="primary capture-start compact-ocr-button" disabled>AI OCRを開始</button><button id="captureStopButton" class="stop-button capture-stop-button" disabled>停止</button><div id="ocrProgress" class="ocr-progress" role="progressbar" aria-label="OCR処理進捗" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="ocrProgressBar"></span></div><small id="ocrProgressText">待機中</small><span class="supported-sheets">OCR可能シート：FMA、BBS、コース、STEF、SLTA、BIT、CAT-R、WAIS-IV、WMS-R</span></div>
         </div>
         <p class="message">評価シート名は画像からAI OCRが自動判定します。</p>
@@ -50,7 +50,7 @@
       </div>
       <canvas id="cameraCanvas" hidden></canvas>
       <section class="camera-capture-sheet" aria-labelledby="cameraCaptureSheetTitle">
-        <div class="camera-capture-sheet-head"><h3 id="cameraCaptureSheetTitle">撮影シート（最大12枚）</h3><strong id="cameraCaptureCount">0 / 12枚</strong></div>
+        <div class="camera-capture-sheet-head"><h3 id="cameraCaptureSheetTitle">撮影シート（最大13枚）</h3><strong id="cameraCaptureCount">0 / 13枚</strong></div>
         <div id="cameraCaptureSlots" class="camera-capture-slots"></div>
       </section>
       <div class="camera-actions">
@@ -64,7 +64,7 @@
     <img id="cameraPreviewImage" alt="">
     <button id="closeCameraPreviewButton" type="button">閉じる</button>
   </dialog>
-  <script type="module" src="/app.js?v=20260729-remove-cache-clear-1"></script>
-  <script type="module" src="/camera-capture.js?v=20260729-guide-crop-1"></script>
+  <script type="module" src="/app.js?v=20260729-multipage-validation-1"></script>
+  <script type="module" src="/camera-capture.js?v=20260729-multipage-validation-1"></script>
 </body>
 </html>

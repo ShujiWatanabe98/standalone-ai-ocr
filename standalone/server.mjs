@@ -501,6 +501,42 @@ const sheetPageRanges = {
   WMSR_ALL: 9,
 };
 
+function validateDetectedSheetSet(detections) {
+  const errors = [];
+  const recognized = detections.filter(item => item.recognized);
+  if (recognized.length !== detections.length) {
+    const pages = detections.map((item, index) => item.recognized ? null : index + 1).filter(Boolean);
+    errors.push(`帳票を判定できない画像があります（${pages.join('、')}枚目）`);
+  }
+  const types = [...new Set(recognized.map(item => item.testType))];
+  if (types.length > 1) errors.push('異なる種類の評価用紙が混在しています');
+  const testType = types.length === 1 ? types[0] : null;
+  const expectedPageCount = testType ? sheetPageRanges[testType] || 1 : null;
+  if (testType && expectedPageCount > 1) {
+    const pages = detections.map(item => item.testType === testType ? item.page : null);
+    const unknownPositions = pages.map((page, index) => page ? null : index + 1).filter(Boolean);
+    if (unknownPositions.length) errors.push(`ページ番号を判定できません（${unknownPositions.join('、')}枚目）`);
+    const counts = new Map();
+    pages.filter(Boolean).forEach(page => counts.set(page, (counts.get(page) || 0) + 1));
+    const duplicates = [...counts].filter(([, count]) => count > 1).map(([page]) => page);
+    if (duplicates.length) errors.push(`同じ用紙を重複して撮影しています（${duplicates.join('、')}ページ）`);
+    const missing = Array.from({ length: expectedPageCount }, (_, index) => index + 1).filter(page => !counts.has(page));
+    if (missing.length) errors.push(`不足している用紙があります（${missing.join('、')}ページ）`);
+    const orderMismatch = pages.some((page, index) => page && page !== index + 1);
+    if (orderMismatch) errors.push(`用紙の順番が正しくありません（現在：${pages.map(page => page || '?').join('→')}ページ）`);
+  } else if (testType && detections.length > 1) {
+    errors.push('単票の評価用紙が複数枚選択されています');
+  }
+  return {
+    valid: errors.length === 0,
+    testType,
+    displayName: testType ? sheetDisplayNames[testType] : null,
+    expectedPageCount,
+    errors,
+    detections,
+  };
+}
+
 async function detectEvaluationSheet(apiKey, imageUrl) {
   const prompt = `あなたはリハビリテーション評価シートの画像分類器です。
 画像に写っている用紙の印刷タイトル、項目名、表レイアウト、ページ番号から帳票を判定してください。
@@ -1118,6 +1154,17 @@ const server = http.createServer(async (req, res) => {
       parseDataUrl(body.imageDataUrl);
       const detection = await detectEvaluationSheet(apiKey, body.imageDataUrl);
       return sendJson(res, 200, detection);
+    }
+    if (req.method === 'POST' && url.pathname === '/api/validate-sheet-set') {
+      const apiKey = process.env.OPENAI_API_KEY;
+      if (!apiKey) return sendJson(res, 503, { error: 'OPENAI_API_KEYが設定されていません' });
+      const body = await readJson(req);
+      const imageDataUrls = Array.isArray(body.imageDataUrls) ? body.imageDataUrls.slice(0, 13) : [];
+      if (!imageDataUrls.length) return sendJson(res, 400, { error: '確認する画像がありません' });
+      imageDataUrls.forEach(parseDataUrl);
+      const detections = [];
+      for (const imageDataUrl of imageDataUrls) detections.push(await detectEvaluationSheet(apiKey, imageDataUrl));
+      return sendJson(res, 200, validateDetectedSheetSet(detections));
     }
     if (req.method === 'GET' && url.pathname === '/api/patients') return sendJson(res, 200, db.patients.filter(p => p.tenantId === identity.tenantId).map(p => publicPatient(p, identity.tenantId)));
     if (req.method === 'POST' && url.pathname === '/api/patients') {
