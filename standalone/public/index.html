@@ -34,7 +34,7 @@
     </section>
     <section id="view-history" class="view"><div class="panel"><div class="jobhead"><h2>OCR履歴</h2><div class="history-header-actions"><button id="refreshHistory">更新</button><button id="deleteAllHistory" class="danger-button">削除</button></div></div><div id="historyList" class="cards"></div></div></section>
     <section id="view-rehab-history" class="view"><div class="panel patient-sheets-panel"><div class="jobhead"><h2>患者リハビリ履歴</h2><button id="refreshPatientSheets" type="button">更新</button></div><div class="patient-picker"><label for="patientTimelineSearch">患者を検索</label><input id="patientTimelineSearch" type="search" placeholder="患者ID・患者名を入力" autocomplete="off"><div id="patientTimelineSuggestions" class="patient-suggestions"></div></div><p class="message">患者を選択すると、評価シートとリハビリ経過記録を確認できます。</p><div id="patientSheetTimeline"><p>患者を選択してください。</p></div></div></section>
-    <section id="view-patients" class="view"><div class="panel"><h2>患者管理</h2><div class="grid2"><div><h3>患者登録</h3><form id="patientForm"><label>施設内患者ID<input name="facilityPatientId" required></label><label>患者名<input name="name" required></label><label>生年月日<input name="birthDate" type="date"></label><button class="primary">登録</button></form></div><div><h3>登録患者</h3><div id="patientList"></div></div></div></div><div class="panel therapist-management-panel"><h2>療法士管理</h2><div class="grid2"><div><h3>療法士登録</h3><form id="therapistForm"><label>療法士名<input name="name" required placeholder="氏名"></label><button class="primary">登録</button><small id="therapistFormStatus"></small></form></div><div><h3>登録療法士</h3><div id="therapistList"></div></div></div></div></section>
+    <section id="view-patients" class="view"><div class="panel"><h2>患者管理</h2><div class="grid2"><div><h3>患者登録</h3><form id="patientForm"><label>施設内患者ID<input name="facilityPatientId" required></label><label>患者名<input name="name" required></label><label>生年月日<input name="birthDate" type="date"></label><button class="primary">登録</button></form></div><div><h3>登録患者</h3><div id="patientList"></div></div></div></div><div class="panel therapist-management-panel"><h2>療法士管理</h2><div class="grid2"><div><h3>療法士登録</h3><form id="therapistForm"><label>療法士ID<input name="therapistId" required maxlength="40" pattern="[A-Za-z0-9._-]+" placeholder="例：PT001"></label><label>療法士名<input name="name" required placeholder="氏名"></label><button class="primary">登録</button><small id="therapistFormStatus"></small></form></div><div><h3>登録療法士</h3><div id="therapistList"></div></div></div></div></section>
   </main>
   <dialog id="detailDialog"><button id="closeDialog" class="close">閉じる</button><div id="detailContent"></div></dialog>
   <dialog id="cameraDialog" class="camera-dialog" aria-labelledby="cameraTitle">
@@ -60,7 +60,7 @@
       </div>
     </section>
   </dialog>
-  <script type="module" src="/app.js?v=20260729-progress-detail-no-discharge-1"></script>
+  <script type="module" src="/app.js?v=20260729-therapist-id-1"></script>
   <script type="module" src="/camera-capture.js?v=20260728-close-left-of-shutter-1"></script>
 </body>
 </html>

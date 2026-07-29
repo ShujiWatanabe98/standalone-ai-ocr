@@ -1,16 +1,16 @@
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 
-const dataDir = await mkdtemp(path.join(tmpdir(), 'aiocr-therapists-'));
+const dataDir = await mkdtemp(path.join(process.cwd(), 'tmp-therapist-test-'));
 const port = 55491;
 const base = `http://127.0.0.1:${port}`;
 const auth = `Basic ${Buffer.from('test-admin:test-password').toString('base64')}`;
 let child;
 
 async function start() {
+  let stderr = '';
   child = spawn(process.execPath, ['standalone/server.mjs'], {
     cwd: path.resolve(import.meta.dirname, '../..'),
     env: {
@@ -30,7 +30,8 @@ async function start() {
       clearTimeout(timer);
       resolve();
     });
-    child.once('exit', code => reject(new Error(`server exited: ${code}`)));
+    child.stderr.on('data', chunk => { stderr += String(chunk); });
+    child.once('exit', code => reject(new Error(`server exited: ${code}\n${stderr}`)));
   });
 }
 
@@ -52,13 +53,15 @@ async function api(route, options = {}) {
 
 try {
   await start();
-  const created = await api('/api/therapists', { method: 'POST', body: JSON.stringify({ name: '永続化テスト療法士' }) });
+  const created = await api('/api/therapists', { method: 'POST', body: JSON.stringify({ therapistId: 'PT-TEST-001', name: '永続化テスト療法士' }) });
+  assert.equal(created.therapistId, 'PT-TEST-001');
   assert.equal(created.name, '永続化テスト療法士');
   await stop();
 
   await start();
   const therapists = await api('/api/therapists');
   assert.equal(therapists.length, 1);
+  assert.equal(therapists[0].therapistId, 'PT-TEST-001');
   assert.equal(therapists[0].name, '永続化テスト療法士');
   console.log('therapist persistence: ok');
 } finally {

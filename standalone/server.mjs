@@ -45,7 +45,7 @@ const allowedImageTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const databaseUrl = process.env.DATABASE_URL || '';
 const sqlPool = databaseUrl ? new pg.Pool({ connectionString: databaseUrl }) : null;
 
-let db = { version: 5, hospitals: [], patients: [], therapists: [], jobs: [], rehabRecords: [] };
+let db = { version: 6, hospitals: [], patients: [], therapists: [], jobs: [], rehabRecords: [] };
 let writeChain = Promise.resolve();
 
 if (!['127.0.0.1', 'localhost', '::1'].includes(host) && (!authUser || !authPassword || !encryptionKey)) {
@@ -82,7 +82,23 @@ db.jobs.forEach(job => { if (!job.tenantId) job.tenantId = facilityId; });
 if (!Array.isArray(db.hospitals)) db.hospitals = [];
 if (!Array.isArray(db.therapists)) db.therapists = [];
 if (!Array.isArray(db.rehabRecords)) db.rehabRecords = [];
-db.version = Math.max(Number(db.version) || 0, 5);
+db.version = Math.max(Number(db.version) || 0, 6);
+let migratedTherapistIds = 0;
+const knownTherapistIds = new Map([['田中 陽介', 'PT001'], ['山本 奈緒', 'OT001'], ['伊藤 拓海', 'ST001']]);
+for (const therapist of db.therapists) {
+  if (therapist.therapistId) continue;
+  const usedIds = new Set(db.therapists.filter(item => item.tenantId === therapist.tenantId).map(item => item.therapistId).filter(Boolean));
+  const knownId = knownTherapistIds.get(therapist.name);
+  if (knownId && !usedIds.has(knownId)) therapist.therapistId = knownId;
+  else {
+    let sequence = 1;
+    while (usedIds.has(`LEGACY-${sequence}`)) sequence += 1;
+    therapist.therapistId = `LEGACY-${sequence}`;
+  }
+  therapist.updatedAt = now();
+  migratedTherapistIds += 1;
+}
+if (migratedTherapistIds) await persist();
 if (db.intepTestSeedVersion !== 1) {
   const intepHospital = db.hospitals.find(hospital => hospital.loginName === 'intep');
   if (intepHospital) {
@@ -99,8 +115,8 @@ if (db.intepTestSeedVersion !== 1) {
       { id: id('patient'), tenantId, facilityPatientId: 'TEST002', name: '鈴木 健一', birthDate: '1956-09-23', createdAt: timestamp, updatedAt: timestamp },
       { id: id('patient'), tenantId, facilityPatientId: 'TEST003', name: '高橋 和子', birthDate: '1963-02-08', createdAt: timestamp, updatedAt: timestamp },
     );
-    for (const name of ['田中 陽介', '山本 奈緒', '伊藤 拓海']) {
-      db.therapists.push({ id: id('therapist'), tenantId, name, createdAt: timestamp, updatedAt: timestamp });
+    for (const [therapistId, name] of [['PT001', '田中 陽介'], ['OT001', '山本 奈緒'], ['ST001', '伊藤 拓海']]) {
+      db.therapists.push({ id: id('therapist'), tenantId, therapistId, name, createdAt: timestamp, updatedAt: timestamp });
     }
     db.intepTestSeedVersion = 1;
     await persist();
@@ -1117,12 +1133,14 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'POST' && url.pathname === '/api/therapists') {
       const body = await readJson(req);
+      const therapistId = safeText(body.therapistId, 40);
       const name = safeText(body.name, 120);
+      if (!/^[A-Za-z0-9._-]{1,40}$/.test(therapistId)) return sendJson(res, 400, { error: '療法士IDは半角英数字・ピリオド・ハイフン・アンダースコアで入力してください。' });
       if (!name) return sendJson(res, 400, { error: '療法士名を入力してください。' });
-      const existing = db.therapists.find(therapist => therapist.tenantId === identity.tenantId && therapist.name === name);
-      if (existing) return sendJson(res, 200, existing);
+      if (db.therapists.some(therapist => therapist.tenantId === identity.tenantId && therapist.therapistId === therapistId)) return sendJson(res, 409, { error: '同じ療法士IDが登録されています。' });
+      if (db.therapists.some(therapist => therapist.tenantId === identity.tenantId && therapist.name === name)) return sendJson(res, 409, { error: '同じ名前の療法士が登録されています。' });
       const timestamp = now();
-      const therapist = { id: id('therapist'), tenantId: identity.tenantId, name, createdAt: timestamp, updatedAt: timestamp };
+      const therapist = { id: id('therapist'), tenantId: identity.tenantId, therapistId, name, createdAt: timestamp, updatedAt: timestamp };
       db.therapists.push(therapist);
       await persist();
       return sendJson(res, 201, therapist);
