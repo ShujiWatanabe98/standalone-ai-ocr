@@ -157,7 +157,7 @@ function rebuildAssessmentGroups() {
   const grouped = new Map();
   const groupedTypes = ['BIT', 'SLTA_ALL', 'CAT_R_ALL', 'WAIS_IV_ALL', 'WMSR_ALL'];
   for (const job of db.jobs.filter(candidate => groupedTypes.includes(candidate.result?.testType)).sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
-    const key = `${job.tenantId}|${job.patientId}|${job.result.testType}`;
+    const key = `${job.tenantId}|${job.patientId}|${safeText(job.therapistName).toLowerCase()}|${job.result.testType}`;
     const pageKey = evaluationPageKey(job);
     let state = grouped.get(key);
     if (!state || (pageKey && state.pages.has(pageKey))) {
@@ -459,7 +459,28 @@ function jobView(job) {
       value: String(field.value ?? '').replace(/[_＿]+/g, ''),
       })),
   } : result;
-  return { ...job, result: cleanResult(job.result), confirmedResult: cleanResult(job.confirmedResult), careStage, hasExistingDischarge, patientName: patient?.name || '削除済み患者', imageUrl: `/api/jobs/${job.id}/image` };
+  const pageNumberedSetTypes = ['BIT', 'CAT_R_ALL', 'WAIS_IV_ALL', 'WMSR_ALL'];
+  const expectedPageCount = pageNumberedSetTypes.includes(job.result?.testType) ? sheetPageRanges[job.result.testType] : null;
+  const groupedJobs = job.assessmentGroupId
+    ? db.jobs.filter(candidate => candidate.tenantId === job.tenantId && candidate.assessmentGroupId === job.assessmentGroupId && candidate.result)
+    : [job];
+  const pageNumbers = groupedJobs.map(candidate => {
+    const key = evaluationPageKey(candidate);
+    const match = /_(\d+)$/.exec(key || '');
+    return match ? Number(match[1]) : null;
+  }).filter(page => Number.isInteger(page));
+  const uniquePages = [...new Set(pageNumbers)].sort((a, b) => a - b);
+  const missingPages = expectedPageCount
+    ? Array.from({ length: expectedPageCount }, (_, index) => index + 1).filter(page => !uniquePages.includes(page))
+    : [];
+  const assessmentSet = expectedPageCount ? {
+    expectedPageCount,
+    capturedPageCount: uniquePages.length,
+    pages: uniquePages,
+    missingPages,
+    complete: missingPages.length === 0,
+  } : null;
+  return { ...job, result: cleanResult(job.result), confirmedResult: cleanResult(job.confirmedResult), careStage, hasExistingDischarge, assessmentSet, patientName: patient?.name || '削除済み患者', imageUrl: `/api/jobs/${job.id}/image` };
 }
 
 function extractOutputText(payload) {

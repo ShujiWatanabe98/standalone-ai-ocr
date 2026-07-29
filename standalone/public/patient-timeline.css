@@ -245,6 +245,26 @@
   font-size: 12px;
 }
 
+.missing-page-advice,
+.complete-page-badge {
+  display: block;
+  width: 100%;
+  padding: 7px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.missing-page-advice {
+  background: #fff0c2;
+  color: #765600;
+}
+
+.complete-page-badge {
+  background: #dff5e8;
+  color: #17653b;
+}
+
 .grouped-evaluation-page {
   margin-top: 22px;
   padding-top: 18px;
