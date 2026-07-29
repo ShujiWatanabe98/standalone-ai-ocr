@@ -150,6 +150,8 @@ assert.match(captureApp, /const bitPageNumber=Number/);
 assert.match(captureCss, /\.ocr-value\.bit-page1-min\{min-width:0;padding:1px 5px;transform:translate\(-50%,-50%\);font-size:12px/);
 assert.match(captureCss, /\.photo-control \.patient-search-input,\s*\.photo-control \.therapist-search-input \{\s*font-size: 16px;/);
 assert.match(cameraCss, /@media \(max-width: 760px\)[\s\S]*?\.photo-control \.patient-search-input,\s*\.photo-control \.therapist-search-input \{\s*font-size: 16px;/);
+assert.match(cameraCss, /\.photo-input-row > \.camera-open-button,\s*\.image-correct-button,\s*\.start-control \.compact-ocr-button,\s*\.capture-stop-button \{\s*font-size: 14px !important;/);
+assert.match(cameraCss, /\.photo-control \.evaluation-date-override input \{\s*font-size: 14px !important;/);
 assert.match(captureApp, /function positionBitOverlays\(overlay\)/);
 assert.match(captureApp, /translateY\(\$\{boxHeight\+3\}px\)/);
 assert.match(captureApp, /class="first-result-row"/);

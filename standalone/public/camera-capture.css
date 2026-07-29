@@ -584,3 +584,15 @@ body:has(.camera-dialog[open]) {
     grid-column: auto;
   }
 }
+
+/* Keep the primary capture actions equally readable at every viewport size. */
+.photo-input-row > .camera-open-button,
+.image-correct-button,
+.start-control .compact-ocr-button,
+.capture-stop-button {
+  font-size: 14px !important;
+}
+
+.photo-control .evaluation-date-override input {
+  font-size: 14px !important;
+}
