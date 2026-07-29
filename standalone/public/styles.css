@@ -59,3 +59,8 @@ main{width:100%;max-width:1680px;padding:clamp(10px,2vw,24px)}
   dialog{width:calc(100vw - 16px);padding:14px}
   .section-heading{align-items:stretch;flex-direction:column}.section-heading button{width:100%;min-height:44px}
 }
+
+#patientForm input,
+#therapistForm input {
+  font-size: 16px;
+}
