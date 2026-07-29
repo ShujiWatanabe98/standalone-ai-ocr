@@ -999,7 +999,20 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || `${host}:${port}`}`);
   try {
     if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && !sameOrigin(req)) return sendJson(res, 403, { error: '不正な送信元です' });
-    if (req.method === 'GET' && url.pathname === '/api/health') return sendJson(res, 200, { ok: true, product: 'Standalone AI OCR', release: '2026-07-28-close-left-edge-1', model, reasoningEffort, retryReasoningEffort, imageDetail, apiKeyConfigured: Boolean(process.env.OPENAI_API_KEY) });
+    if (req.method === 'GET' && url.pathname === '/api/health') {
+      const intepTenantId = db.hospitals.find(hospital => hospital.loginName === 'intep')?.id;
+      return sendJson(res, 200, {
+        ok: true, product: 'Standalone AI OCR', release: '2026-07-29-intep-db-seed-1',
+        model, reasoningEffort, retryReasoningEffort, imageDetail, apiKeyConfigured: Boolean(process.env.OPENAI_API_KEY),
+        intepTestData: intepTenantId ? {
+          seeded: db.intepTestSeedVersion === 1,
+          patients: db.patients.filter(patient => patient.tenantId === intepTenantId).length,
+          therapists: db.therapists.filter(therapist => therapist.tenantId === intepTenantId).length,
+          jobs: db.jobs.filter(job => job.tenantId === intepTenantId).length,
+          rehabRecords: db.rehabRecords.filter(record => record.tenantId === intepTenantId).length,
+        } : { seeded: false },
+      });
+    }
     if (req.method === 'POST' && url.pathname === '/api/auth/login') {
       if ((!authUser || !authPassword) && db.hospitals.length === 0) return sendJson(res, 200, { ok: true, userId: 'local-user', tenantId: facilityId, role: 'ADMIN', redirect: '/admin.html' });
       if (loginRateLimited(req)) return sendJson(res, 429, { error: 'ログイン失敗が多すぎます。15分後に再試行してください' });
