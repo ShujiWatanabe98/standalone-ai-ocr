@@ -206,6 +206,8 @@ body:has(.camera-dialog[open]) {
 .camera-capture-sheet {
   position: relative;
   z-index: 3;
+  min-width: 0;
+  overflow: hidden;
   padding: 8px 14px 10px;
   background: #111d22;
   border-top: 1px solid #ffffff24;
@@ -229,16 +231,20 @@ body:has(.camera-dialog[open]) {
 }
 
 .camera-capture-slots {
-  display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: 48px;
-  grid-template-rows: 32px;
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  flex-wrap: nowrap;
   gap: 5px;
-  overflow-x: auto;
+  overflow-x: scroll;
   overflow-y: hidden;
-  padding-bottom: 5px;
+  padding-bottom: 8px;
   scrollbar-width: thin;
+  scrollbar-gutter: stable;
   overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x;
 }
 
 .camera-capture-slot {
@@ -246,6 +252,7 @@ body:has(.camera-dialog[open]) {
   display: grid;
   place-items: center;
   width: 48px;
+  flex: 0 0 48px;
   min-height: 32px;
   overflow: hidden;
   border: 1px dashed #ffffff55;
@@ -350,9 +357,10 @@ body:has(.camera-dialog[open]) {
   position: absolute;
   top: 50%;
   left: 50%;
-  width: min(76vw, calc(68vh * 210 / 297));
+  width: min(72%, calc(68vh * 210 / 297));
   aspect-ratio: 210 / 297;
   transform: translate(-50%, -50%);
+  box-sizing: border-box;
   border: 2px solid #fff9;
   border-radius: 4px;
   box-shadow: 0 0 0 100vmax #0006;
@@ -418,11 +426,14 @@ body:has(.camera-dialog[open]) {
   z-index: 4;
   top: 4px;
   left: 50%;
-  width: min(92vw, 840px);
-  max-width: calc(100% - 12px);
+  right: auto;
+  width: calc(100% - 24px);
+  max-width: 840px;
+  margin: 0;
   min-height: 46px;
   padding: 10px 24px;
   transform: translateX(-50%);
+  box-sizing: border-box;
   border: 2px solid #ffffffb8;
   border-radius: 12px;
   background: #081014e8;
@@ -454,8 +465,8 @@ body:has(.camera-dialog[open]) {
 
 @media (orientation: landscape) and (max-height: 700px) {
   .camera-guide {
-    width: min(54vw, calc(68vh * 297 / 210));
-    aspect-ratio: 297 / 210;
+    width: min(42%, calc(68vh * 210 / 297));
+    aspect-ratio: 210 / 297;
   }
 
   .camera-header {
