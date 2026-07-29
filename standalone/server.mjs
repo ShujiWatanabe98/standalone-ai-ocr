@@ -1024,6 +1024,7 @@ const server = http.createServer(async (req, res) => {
           seeded: db.intepTestSeedVersion === 1,
           patients: db.patients.filter(patient => patient.tenantId === intepTenantId).length,
           therapists: db.therapists.filter(therapist => therapist.tenantId === intepTenantId).length,
+          therapistsWithIds: db.therapists.filter(therapist => therapist.tenantId === intepTenantId && therapist.therapistId).length,
           jobs: db.jobs.filter(job => job.tenantId === intepTenantId).length,
           rehabRecords: db.rehabRecords.filter(record => record.tenantId === intepTenantId).length,
         } : { seeded: false },
