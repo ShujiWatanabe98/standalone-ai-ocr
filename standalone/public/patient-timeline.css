@@ -123,23 +123,31 @@
 }
 
 .discharge-button {
-  display: block;
-  position: relative;
-  flex: 0 0 auto;
-  width: calc(100% - 20px);
-  margin: 12px 10px 14px;
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+  width: auto;
+  margin: 0;
+  padding: 6px 12px;
+  background: #fff;
   border-color: var(--reha-st);
   color: var(--reha-st);
+  box-shadow: 0 2px 8px #0002;
 }
 
 .undo-discharge-button {
-  display: block;
-  position: relative;
-  flex: 0 0 auto;
-  width: calc(100% - 20px);
-  margin: 12px 10px 14px;
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+  width: auto;
+  margin: 0;
+  padding: 6px 10px;
+  background: #fff;
   border-color: var(--reha-back);
   color: var(--reha-back);
+  box-shadow: 0 2px 8px #0002;
 }
 
 .initial-summary-panel {
