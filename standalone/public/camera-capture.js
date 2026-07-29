@@ -5,6 +5,7 @@ const shootButton = document.querySelector('#shootCameraButton');
 const finishButton = document.querySelector('#finishCameraButton');
 const video = document.querySelector('#cameraVideo');
 const canvas = document.querySelector('#cameraCanvas');
+const cameraGuide = document.querySelector('#cameraGuide');
 const status = document.querySelector('#cameraStatus');
 const imageInput = document.querySelector('#imageInput');
 const sheetOverlay = document.querySelector('#cameraSheetOverlay');
@@ -221,10 +222,40 @@ function captureFrame() {
   if (!video.videoWidth || !video.videoHeight) return;
   stopLiveDetection();
   shootButton.disabled = true;
-  canvas.width = video.videoWidth;
-  canvas.height = video.videoHeight;
+  const videoRect = video.getBoundingClientRect();
+  const guideRect = cameraGuide.getBoundingClientRect();
+  const coverScale = Math.max(
+    videoRect.width / video.videoWidth,
+    videoRect.height / video.videoHeight
+  );
+  const renderedWidth = video.videoWidth * coverScale;
+  const renderedHeight = video.videoHeight * coverScale;
+  const renderedLeft = videoRect.left + (videoRect.width - renderedWidth) / 2;
+  const renderedTop = videoRect.top + (videoRect.height - renderedHeight) / 2;
+  const sourceX = Math.max(0, (guideRect.left - renderedLeft) / coverScale);
+  const sourceY = Math.max(0, (guideRect.top - renderedTop) / coverScale);
+  const sourceWidth = Math.min(
+    video.videoWidth - sourceX,
+    guideRect.width / coverScale
+  );
+  const sourceHeight = Math.min(
+    video.videoHeight - sourceY,
+    guideRect.height / coverScale
+  );
+  canvas.width = Math.max(1, Math.round(sourceWidth));
+  canvas.height = Math.max(1, Math.round(sourceHeight));
   const context = canvas.getContext('2d', { alpha: false });
-  context.drawImage(video, 0, 0, canvas.width, canvas.height);
+  context.drawImage(
+    video,
+    sourceX,
+    sourceY,
+    sourceWidth,
+    sourceHeight,
+    0,
+    0,
+    canvas.width,
+    canvas.height
+  );
   canvas.toBlob(blob => {
     if (!blob) {
       status.textContent = '撮影画像を作成できませんでした。もう一度お試しください。';

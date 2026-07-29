@@ -93,6 +93,9 @@ assert.match(cameraApp, /activeCaptureIndex = Number\(button\.dataset\.selectCap
 assert.match(cameraApp, /previewDialog\.showModal\(\)/);
 assert.match(cameraApp, /capturedSheets\[activeCaptureIndex\] = \{ file, url: URL\.createObjectURL\(blob\) \}/);
 assert.match(cameraCss, /\.camera-capture-slot\.active/);
+assert.match(cameraApp, /const coverScale = Math\.max/);
+assert.match(cameraApp, /const guideRect = cameraGuide\.getBoundingClientRect\(\)/);
+assert.match(cameraApp, /context\.drawImage\(\s*video,\s*sourceX,\s*sourceY,\s*sourceWidth,\s*sourceHeight/);
 assert.match(serverSource, /async function detectEvaluationSheet/);
 assert.match(serverSource, /rehainfo-sheet-detection-v1/);
 assert.match(serverSource, /url\.pathname === '\/api\/detect-sheet'/);
