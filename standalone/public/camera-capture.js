@@ -285,41 +285,13 @@ function captureFrame() {
   }, 'image/jpeg', 0.94);
 }
 
-async function validateCapturedSheetSet() {
-  const imageDataUrls = await Promise.all(capturedSheets.filter(Boolean).map(item => blobToDataUrl(item.file)));
-  const response = await fetch('/api/validate-sheet-set', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ imageDataUrls })
-  });
-  const result = await response.json();
-  if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
-  return result;
-}
-
-async function finishCaptures() {
+function finishCaptures() {
   if (!capturedSheetCount()) return;
-  finishButton.disabled = true;
-  showSheetOverlay('全ページを確認中…', 'detecting');
-  try {
-    const validation = await validateCapturedSheetSet();
-    if (!validation.valid) {
-      const message = `撮影した用紙を確認してください。\n・${validation.errors.join('\n・')}`;
-      showSheetOverlay(validation.errors[0], 'error');
-      window.alert(message);
-      return;
-    }
-    const transfer = new DataTransfer();
-    capturedSheets.filter(Boolean).forEach(item => transfer.items.add(item.file));
-    imageInput.files = transfer.files;
-    imageInput.dispatchEvent(new Event('change', { bubbles: true }));
-    closeCamera();
-  } catch (error) {
-    showSheetOverlay('用紙の確認に失敗しました', 'error');
-    window.alert(`用紙を確認できませんでした：${error.message}`);
-  } finally {
-    finishButton.disabled = false;
-  }
+  const transfer = new DataTransfer();
+  capturedSheets.filter(Boolean).forEach(item => transfer.items.add(item.file));
+  imageInput.files = transfer.files;
+  imageInput.dispatchEvent(new Event('change', { bubbles: true }));
+  closeCamera();
 }
 
 openButton?.addEventListener('click', openCamera);
