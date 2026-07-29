@@ -196,7 +196,7 @@ body:has(.camera-dialog[open]) {
 
 .camera-shell {
   display: grid;
-  grid-template-rows: auto minmax(220px, 1fr) auto auto;
+  grid-template-rows: minmax(220px, 1fr) auto auto;
   width: 100%;
   height: 100%;
   min-width: 0;
@@ -424,10 +424,10 @@ body:has(.camera-dialog[open]) {
 .camera-sheet-overlay {
   position: absolute;
   z-index: 4;
-  top: 4px;
+  top: -58px;
   left: 50%;
   right: auto;
-  width: calc(100% - 24px);
+  width: 100%;
   max-width: 840px;
   margin: 0;
   min-height: 46px;
