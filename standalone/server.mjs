@@ -20,6 +20,7 @@ if (process.env.AIOCR_SKIP_LOCAL_ENV !== '1' && existsSync(localEnvFile)) {
 const publicDir = path.join(here, 'public');
 const dataDir = path.resolve(process.env.AIOCR_DATA_DIR || path.join(here, 'data'));
 const imageDir = path.join(dataDir, 'images');
+const rehabVoiceAudioDir = path.join(dataDir, 'rehab-voice-audio');
 const dbFile = path.join(dataDir, 'database.json');
 const backupDir = path.resolve(process.env.AIOCR_BACKUP_DIR || path.join(here, 'backups'));
 const port = Number(process.env.AIOCR_PORT || process.env.PORT || 8795);
@@ -45,7 +46,7 @@ const allowedImageTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const databaseUrl = process.env.DATABASE_URL || '';
 const sqlPool = databaseUrl ? new pg.Pool({ connectionString: databaseUrl }) : null;
 
-let db = { version: 6, hospitals: [], patients: [], therapists: [], jobs: [], rehabRecords: [] };
+let db = { version: 7, hospitals: [], patients: [], therapists: [], jobs: [], rehabRecords: [], rehabVoiceSessions: [] };
 let writeChain = Promise.resolve();
 
 if (!['127.0.0.1', 'localhost', '::1'].includes(host) && (!authUser || !authPassword || !encryptionKey)) {
@@ -54,10 +55,12 @@ if (!['127.0.0.1', 'localhost', '::1'].includes(host) && (!authUser || !authPass
 if (encryptionSecret && encryptionSecret.length < 32) throw new Error('AIOCR_ENCRYPTION_KEY must be at least 32 characters');
 
 await mkdir(imageDir, { recursive: true });
+await mkdir(rehabVoiceAudioDir, { recursive: true });
 await mkdir(backupDir, { recursive: true });
 if (sqlPool) {
   await sqlPool.query('CREATE TABLE IF NOT EXISTS aiocr_state (id TEXT PRIMARY KEY, payload BYTEA NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())');
   await sqlPool.query('CREATE TABLE IF NOT EXISTS aiocr_images (name TEXT PRIMARY KEY, payload BYTEA NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())');
+  await sqlPool.query('CREATE TABLE IF NOT EXISTS aiocr_rehab_voice_audio (session_id TEXT PRIMARY KEY, mime_type TEXT NOT NULL, payload BYTEA NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())');
   const stored = await sqlPool.query("SELECT payload FROM aiocr_state WHERE id = 'main'");
   if (stored.rowCount) {
     const parsed = JSON.parse(decryptBytes(stored.rows[0].payload).toString('utf8'));
@@ -82,7 +85,22 @@ db.jobs.forEach(job => { if (!job.tenantId) job.tenantId = facilityId; });
 if (!Array.isArray(db.hospitals)) db.hospitals = [];
 if (!Array.isArray(db.therapists)) db.therapists = [];
 if (!Array.isArray(db.rehabRecords)) db.rehabRecords = [];
-db.version = Math.max(Number(db.version) || 0, 6);
+if (!Array.isArray(db.rehabVoiceSessions)) db.rehabVoiceSessions = [];
+db.version = Math.max(Number(db.version) || 0, 7);
+let seededRehabVoicePatients = 0;
+for (const tenantId of new Set([facilityId, ...db.hospitals.filter(hospital => hospital.active !== false).map(hospital => hospital.id)])) {
+  for (const [facilityPatientId, name, birthDate] of [
+    ['RV001', 'リハビリボイス TEST患者1', '1950-01-15'],
+    ['RV002', 'リハビリボイス TEST患者2', '1960-06-20'],
+    ['RV003', 'リハビリボイス TEST患者3', '1970-11-03'],
+  ]) {
+    if (db.patients.some(patient => patient.tenantId === tenantId && patient.facilityPatientId === facilityPatientId)) continue;
+    const timestamp = now();
+    db.patients.push({ id: id('patient'), tenantId, facilityPatientId, name, birthDate, createdAt: timestamp, updatedAt: timestamp });
+    seededRehabVoicePatients += 1;
+  }
+}
+if (seededRehabVoicePatients) await persist();
 let migratedTherapistIds = 0;
 const knownTherapistIds = new Map([['田中 陽介', 'PT001'], ['山本 奈緒', 'OT001'], ['伊藤 拓海', 'ST001']]);
 for (const therapist of db.therapists) {
@@ -99,29 +117,6 @@ for (const therapist of db.therapists) {
   migratedTherapistIds += 1;
 }
 if (migratedTherapistIds) await persist();
-if (db.intepTestSeedVersion !== 1) {
-  const intepHospital = db.hospitals.find(hospital => hospital.loginName === 'intep');
-  if (intepHospital) {
-    const tenantId = intepHospital.id;
-    const deletedJobs = db.jobs.filter(job => job.tenantId === tenantId);
-    for (const job of deletedJobs) if (job.imageFile) await deleteImage(job.imageFile);
-    db.patients = db.patients.filter(patient => patient.tenantId !== tenantId);
-    db.jobs = db.jobs.filter(job => job.tenantId !== tenantId);
-    db.rehabRecords = db.rehabRecords.filter(record => record.tenantId !== tenantId);
-    db.therapists = db.therapists.filter(therapist => therapist.tenantId !== tenantId);
-    const timestamp = now();
-    db.patients.push(
-      { id: id('patient'), tenantId, facilityPatientId: 'TEST001', name: '佐藤 美咲', birthDate: '1948-04-12', createdAt: timestamp, updatedAt: timestamp },
-      { id: id('patient'), tenantId, facilityPatientId: 'TEST002', name: '鈴木 健一', birthDate: '1956-09-23', createdAt: timestamp, updatedAt: timestamp },
-      { id: id('patient'), tenantId, facilityPatientId: 'TEST003', name: '高橋 和子', birthDate: '1963-02-08', createdAt: timestamp, updatedAt: timestamp },
-    );
-    for (const [therapistId, name] of [['PT001', '田中 陽介'], ['OT001', '山本 奈緒'], ['ST001', '伊藤 拓海']]) {
-      db.therapists.push({ id: id('therapist'), tenantId, therapistId, name, createdAt: timestamp, updatedAt: timestamp });
-    }
-    db.intepTestSeedVersion = 1;
-    await persist();
-  }
-}
 if ('audit' in db) { delete db.audit; await persist(); }
 const interruptedJobs = db.jobs.filter(job => ['REQUEST', 'PROCESSING'].includes(job.status));
 if (interruptedJobs.length) {
@@ -327,6 +322,35 @@ async function deleteImage(name) {
   if (sqlPool) return sqlPool.query('DELETE FROM aiocr_images WHERE name = $1', [name]);
   const target = path.join(imageDir, name);
   if (existsSync(target)) await unlink(target);
+}
+async function writeRehabVoiceAudio(sessionId, mimeType, content) {
+  const payload = encryptBytes(content);
+  if (sqlPool) return sqlPool.query('INSERT INTO aiocr_rehab_voice_audio (session_id, mime_type, payload, updated_at) VALUES ($1, $2, $3, NOW()) ON CONFLICT (session_id) DO UPDATE SET mime_type = EXCLUDED.mime_type, payload = EXCLUDED.payload, updated_at = NOW()', [sessionId, mimeType, payload]);
+  await writeFile(path.join(rehabVoiceAudioDir, `${sessionId}.bin`), payload);
+  await writeFile(path.join(rehabVoiceAudioDir, `${sessionId}.type`), mimeType, 'utf8');
+}
+async function readRehabVoiceAudio(sessionId) {
+  if (sqlPool) {
+    const stored = await sqlPool.query('SELECT mime_type, payload FROM aiocr_rehab_voice_audio WHERE session_id = $1', [sessionId]);
+    if (!stored.rowCount) return null;
+    return { mimeType: stored.rows[0].mime_type, content: decryptBytes(stored.rows[0].payload) };
+  }
+  const payloadPath = path.join(rehabVoiceAudioDir, `${sessionId}.bin`);
+  const typePath = path.join(rehabVoiceAudioDir, `${sessionId}.type`);
+  if (!existsSync(payloadPath) || !existsSync(typePath)) return null;
+  return { mimeType: safeText(await readFile(typePath, 'utf8'), 100), content: decryptBytes(await readFile(payloadPath)) };
+}
+async function deleteRehabVoiceAudio(sessionId) {
+  if (sqlPool) return sqlPool.query('DELETE FROM aiocr_rehab_voice_audio WHERE session_id = $1', [sessionId]);
+  for (const extension of ['bin', 'type']) {
+    const target = path.join(rehabVoiceAudioDir, `${sessionId}.${extension}`);
+    if (existsSync(target)) await unlink(target);
+  }
+}
+function parseAudioDataUrl(dataUrl) {
+  const match = /^data:(audio\/(?:webm|ogg|mpeg|mp4|wav|x-wav));base64,([A-Za-z0-9+/=\r\n]+)$/.exec(String(dataUrl || ''));
+  if (!match) throw Object.assign(new Error('録音音声の形式が不正です'), { status: 400 });
+  return { mimeType: match[1], content: Buffer.from(match[2], 'base64') };
 }
 async function createBackup() {
   await persist();
@@ -1115,21 +1139,7 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || `${host}:${port}`}`);
   try {
     if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && !sameOrigin(req)) return sendJson(res, 403, { error: '不正な送信元です' });
-    if (req.method === 'GET' && url.pathname === '/api/health') {
-      const intepTenantId = db.hospitals.find(hospital => hospital.loginName === 'intep')?.id;
-      return sendJson(res, 200, {
-        ok: true, product: 'Standalone AI OCR', release: '2026-07-29-intep-db-seed-1',
-        model, reasoningEffort, retryReasoningEffort, imageDetail, apiKeyConfigured: Boolean(process.env.OPENAI_API_KEY),
-        intepTestData: intepTenantId ? {
-          seeded: db.intepTestSeedVersion === 1,
-          patients: db.patients.filter(patient => patient.tenantId === intepTenantId).length,
-          therapists: db.therapists.filter(therapist => therapist.tenantId === intepTenantId).length,
-          therapistsWithIds: db.therapists.filter(therapist => therapist.tenantId === intepTenantId && therapist.therapistId).length,
-          jobs: db.jobs.filter(job => job.tenantId === intepTenantId).length,
-          rehabRecords: db.rehabRecords.filter(record => record.tenantId === intepTenantId).length,
-        } : { seeded: false },
-      });
-    }
+    if (req.method === 'GET' && url.pathname === '/api/health') return sendJson(res, 200, { ok: true, product: 'Standalone AI OCR', release: '2026-08-02-rehab-voice-server-db-1', model, reasoningEffort, retryReasoningEffort, imageDetail, apiKeyConfigured: Boolean(process.env.OPENAI_API_KEY) });
     if (req.method === 'POST' && url.pathname === '/api/auth/login') {
       if ((!authUser || !authPassword) && db.hospitals.length === 0) return sendJson(res, 200, { ok: true, userId: 'local-user', tenantId: facilityId, role: 'ADMIN', redirect: '/admin.html' });
       if (loginRateLimited(req)) return sendJson(res, 429, { error: 'ログイン失敗が多すぎます。15分後に再試行してください' });
@@ -1229,6 +1239,94 @@ const server = http.createServer(async (req, res) => {
       const detections = [];
       for (const imageDataUrl of imageDataUrls) detections.push(await detectEvaluationSheet(apiKey, imageDataUrl));
       return sendJson(res, 200, validateDetectedSheetSet(detections));
+    }
+    if (req.method === 'POST' && url.pathname === '/api/rehab-voice/speech') {
+      const apiKey = process.env.OPENAI_API_KEY;
+      if (!apiKey) return sendJson(res, 503, { error: 'OPENAI_API_KEYが設定されていません' });
+      const body = await readJson(req);
+      const text = safeText(body.text, 1000);
+      const speaker = body.speaker === 'patient' ? 'patient' : 'therapist';
+      if (!text) return sendJson(res, 400, { error: '音声にする会話テキストがありません' });
+      const speechResponse = await fetch('https://api.openai.com/v1/audio/speech', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini-tts',
+          voice: speaker === 'patient' ? 'marin' : 'cedar',
+          input: text,
+          instructions: speaker === 'patient'
+            ? '自然な日本語で、リハビリ中の患者として落ち着いて話してください。'
+            : '自然な日本語で、患者に寄り添う療法士として明瞭に話してください。',
+          response_format: 'mp3',
+        }),
+      });
+      if (!speechResponse.ok) {
+        const detail = safeText(await speechResponse.text(), 500);
+        return sendJson(res, speechResponse.status, { error: `AI音声を生成できませんでした：${detail}` });
+      }
+      const audioBuffer = Buffer.from(await speechResponse.arrayBuffer());
+      res.writeHead(200, { 'Content-Type': 'audio/mpeg', 'Content-Length': audioBuffer.length, 'Cache-Control': 'no-store' });
+      return res.end(audioBuffer);
+    }
+    if (req.method === 'GET' && url.pathname === '/api/rehab-voice/sessions') {
+      return sendJson(res, 200, db.rehabVoiceSessions.filter(session => session.tenantId === identity.tenantId).sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
+    }
+    if (req.method === 'POST' && url.pathname === '/api/rehab-voice/sessions') {
+      const body = await readJson(req);
+      const requestedId = safeText(body.id, 100);
+      const sessionId = /^rehab-voice-[A-Za-z0-9._-]+$/.test(requestedId) ? requestedId : id('rehab-voice');
+      const patient = db.patients.find(item => item.tenantId === identity.tenantId && item.id === body.patientId);
+      const therapist = db.therapists.find(item => item.tenantId === identity.tenantId && item.id === body.therapistId);
+      const patientLabel = safeText(body.patientLabel || (patient ? `${patient.facilityPatientId}｜${patient.name}` : ''), 200);
+      const therapistLabel = safeText(body.therapistLabel || (therapist ? `${therapist.therapistId || ''}｜${therapist.name}` : ''), 200);
+      if (!patientLabel || !therapistLabel) return sendJson(res, 400, { error: '患者と療法士を選択してください' });
+      const existingIndex = db.rehabVoiceSessions.findIndex(session => session.tenantId === identity.tenantId && session.id === sessionId);
+      const previous = existingIndex >= 0 ? db.rehabVoiceSessions[existingIndex] : null;
+      const session = {
+        id: sessionId,
+        tenantId: identity.tenantId,
+        patientId: patient?.id || safeText(body.patientId, 100) || null,
+        therapistId: therapist?.id || safeText(body.therapistId, 100) || null,
+        patientLabel,
+        therapistLabel,
+        duration: safeText(body.duration, 20),
+        transcript: safeText(body.transcript, 100000),
+        patientLog: safeText(body.patientLog, 20000),
+        rewardFeedback: safeText(body.rewardFeedback, 5000),
+        concerns: safeText(body.concerns, 20000),
+        empathyFeedback: safeText(body.empathyFeedback, 5000),
+        consultations: safeText(body.consultations, 20000),
+        audioSource: body.audioSource === 'ai-test' ? 'ai-test' : (body.audioDataUrl || previous?.hasAudio ? 'recorded' : 'none'),
+        hasAudio: Boolean(body.audioDataUrl || previous?.hasAudio),
+        createdAt: safeText(body.createdAt, 40) || previous?.createdAt || now(),
+        updatedAt: now(),
+      };
+      if (body.audioDataUrl) {
+        const audioPayload = parseAudioDataUrl(body.audioDataUrl);
+        await writeRehabVoiceAudio(sessionId, audioPayload.mimeType, audioPayload.content);
+      }
+      if (existingIndex >= 0) db.rehabVoiceSessions[existingIndex] = session;
+      else db.rehabVoiceSessions.push(session);
+      await persist();
+      return sendJson(res, existingIndex >= 0 ? 200 : 201, session);
+    }
+    const rehabVoiceAudioMatch = /^\/api\/rehab-voice\/sessions\/([^/]+)\/audio$/.exec(url.pathname);
+    if (req.method === 'GET' && rehabVoiceAudioMatch) {
+      const session = db.rehabVoiceSessions.find(item => item.tenantId === identity.tenantId && item.id === rehabVoiceAudioMatch[1]);
+      if (!session) return sendJson(res, 404, { error: 'リハビリボイス履歴が見つかりません' });
+      const recording = await readRehabVoiceAudio(session.id);
+      if (!recording) return sendJson(res, 404, { error: '録音音声が見つかりません' });
+      res.writeHead(200, { 'Content-Type': recording.mimeType, 'Content-Length': recording.content.length, 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' });
+      return res.end(recording.content);
+    }
+    const rehabVoiceSessionMatch = /^\/api\/rehab-voice\/sessions\/([^/]+)$/.exec(url.pathname);
+    if (req.method === 'DELETE' && rehabVoiceSessionMatch) {
+      const index = db.rehabVoiceSessions.findIndex(item => item.tenantId === identity.tenantId && item.id === rehabVoiceSessionMatch[1]);
+      if (index < 0) return sendJson(res, 404, { error: 'リハビリボイス履歴が見つかりません' });
+      const [deleted] = db.rehabVoiceSessions.splice(index, 1);
+      await deleteRehabVoiceAudio(deleted.id);
+      await persist();
+      return sendJson(res, 200, { deletedId: deleted.id });
     }
     if (req.method === 'GET' && url.pathname === '/api/patients') return sendJson(res, 200, db.patients.filter(p => p.tenantId === identity.tenantId).map(p => publicPatient(p, identity.tenantId)));
     if (req.method === 'POST' && url.pathname === '/api/patients') {

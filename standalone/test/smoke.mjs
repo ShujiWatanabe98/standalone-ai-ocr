@@ -352,8 +352,22 @@ assert.equal((await deleteRehabRecordResponse.json()).deletedId, rehabRecord.id)
 const rehabRecordsAfterDelete = await fetch(`${base}/api/rehab-records?patientId=${patient.id}`, { headers: { Authorization: auth } }).then(r => r.json());
 assert.equal(rehabRecordsAfterDelete.length, 0);
 const patients = await fetch(`${base}/api/patients`, { headers: { Authorization: auth } }).then(r => r.json());
-assert.equal(patients.length, 1);
-assert.equal(patients[0].name, 'テスト患者');
+const ordinaryPatients = patients.filter(item => !item.facilityPatientId.startsWith('RV'));
+assert.equal(ordinaryPatients.length, 1);
+assert.equal(ordinaryPatients[0].name, 'テスト患者');
+assert.deepEqual(patients.filter(item => item.facilityPatientId.startsWith('RV')).map(item => item.facilityPatientId).sort(), ['RV001', 'RV002', 'RV003']);
+const voiceSessionResponse = await fetch(`${base}/api/rehab-voice/sessions`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json', Authorization: auth },
+  body: JSON.stringify({ id: 'rehab-voice-smoke-1', patientId: patient.id, patientLabel: `TEST001｜${patient.name}`, therapistLabel: 'PT001｜Test Therapist', duration: '00:20:00', transcript: '患者：テスト会話', patientLog: 'テストログ', concerns: 'なし', consultations: 'なし', audioSource: 'recorded', audioDataUrl: 'data:audio/webm;base64,V0VCTQ==' }),
+});
+assert.equal(voiceSessionResponse.status, 201);
+const voiceSessions = await fetch(`${base}/api/rehab-voice/sessions`, { headers: { Authorization: auth } }).then(r => r.json());
+assert.equal(voiceSessions.length, 1);
+assert.equal(voiceSessions[0].hasAudio, true);
+const voiceAudioResponse = await fetch(`${base}/api/rehab-voice/sessions/rehab-voice-smoke-1/audio`, { headers: { Authorization: auth } });
+assert.equal(voiceAudioResponse.status, 200);
+assert.equal(voiceAudioResponse.headers.get('content-type'), 'audio/webm');
 const tinyPng = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
 const jobResponse = await fetch(`${base}/api/jobs`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: auth }, body: JSON.stringify({ patientId: patient.id, imageDataUrl: tinyPng }) });
 assert.equal(jobResponse.status, 202);
