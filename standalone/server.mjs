@@ -46,7 +46,7 @@ const allowedImageTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const databaseUrl = process.env.DATABASE_URL || '';
 const sqlPool = databaseUrl ? new pg.Pool({ connectionString: databaseUrl }) : null;
 
-let db = { version: 10, hospitals: [], patients: [], therapists: [], jobs: [], rehabRecords: [], rehabVoiceSessions: [], rehabPlans: [], rehabPlanContexts: [], outcomeGoals: [], outcomeSnapshots: [], outcomeActions: [] };
+let db = { version: 11, hospitals: [], patients: [], therapists: [], jobs: [], rehabRecords: [], rehabVoiceSessions: [], rehabPlans: [], rehabPlanContexts: [], outcomeGoals: [], outcomeSnapshots: [], outcomeActions: [], fimAssessments: [] };
 let writeChain = Promise.resolve();
 
 if (!['127.0.0.1', 'localhost', '::1'].includes(host) && (!authUser || !authPassword || !encryptionKey)) {
@@ -91,7 +91,8 @@ if (!Array.isArray(db.rehabPlanContexts)) db.rehabPlanContexts = [];
 if (!Array.isArray(db.outcomeGoals)) db.outcomeGoals = [];
 if (!Array.isArray(db.outcomeSnapshots)) db.outcomeSnapshots = [];
 if (!Array.isArray(db.outcomeActions)) db.outcomeActions = [];
-db.version = Math.max(Number(db.version) || 0, 10);
+if (!Array.isArray(db.fimAssessments)) db.fimAssessments = [];
+db.version = Math.max(Number(db.version) || 0, 11);
 const outcomeGoalTemplates = [
   { key: 'homeReturnRate', label: '在宅復帰率', unit: '%', publicBaseline: 83, proposedTarget: 85, direction: 'UP', sourceLabel: '西大和リハビリテーション病院 公開実績', sourceUrl: 'https://www.nishiyamato.net/reason/' },
   { key: 'fimGain', label: 'FIM改善', unit: '点', publicBaseline: 27.6, proposedTarget: 30, direction: 'UP', sourceLabel: '西大和リハビリテーション病院 公開実績', sourceUrl: 'https://www.nishiyamato.net/reason/' },
@@ -249,6 +250,37 @@ function normalizedRehabPlanContext(body, previous = {}) {
     risks: text('risks'), unresolvedQuestions: text('unresolvedQuestions'), sourceNotes: text('sourceNotes'),
     dataStatus: body.dataStatus === 'VERIFIED' ? 'VERIFIED' : 'UNVERIFIED', lastReviewedDate: date('lastReviewedDate'), reviewedBy: text('reviewedBy', 200),
   };
+}
+
+const fimMotorItems = ['eating','grooming','bathing','dressingUpper','dressingLower','toileting','bladder','bowel','transferBedChair','transferToilet','transferTubShower','locomotion','stairs'];
+const fimCognitiveItems = ['comprehension','expression','socialInteraction','problemSolving','memory'];
+const fimItems = [...fimMotorItems, ...fimCognitiveItems];
+function normalizeFimAssessment(body, previous = {}) {
+  const scores = Object.fromEntries(fimItems.map(key => {
+    const value = Number(body.scores?.[key] ?? previous.scores?.[key]);
+    return [key, Number.isInteger(value) && value >= 1 && value <= 7 ? value : null];
+  }));
+  const valid = keys => keys.map(key => scores[key]).filter(Number.isFinite);
+  const motor = valid(fimMotorItems), cognitive = valid(fimCognitiveItems);
+  const evaluationDate = /^\d{4}-\d{2}-\d{2}$/.test(String(body.evaluationDate || '')) ? body.evaluationDate : (previous.evaluationDate || '');
+  return {
+    stage: ['ADMISSION','PERIODIC','DISCHARGE'].includes(body.stage) ? body.stage : (previous.stage || 'PERIODIC'),
+    evaluationDate, evaluator: safeText(body.evaluator ?? previous.evaluator, 200), locomotionMode: body.locomotionMode === 'WHEELCHAIR' ? 'WHEELCHAIR' : 'WALK',
+    scores, motorTotal: motor.length === fimMotorItems.length ? motor.reduce((a, b) => a + b, 0) : null,
+    cognitiveTotal: cognitive.length === fimCognitiveItems.length ? cognitive.reduce((a, b) => a + b, 0) : null,
+    total: motor.length + cognitive.length === fimItems.length ? [...motor, ...cognitive].reduce((a, b) => a + b, 0) : null,
+    missingItems: fimItems.filter(key => !Number.isFinite(scores[key])), note: safeText(body.note ?? previous.note, 2000),
+    status: body.status === 'CONFIRMED' ? 'CONFIRMED' : 'DRAFT',
+  };
+}
+function fimPatientSummary(tenantId, patientId) {
+  const assessments = db.fimAssessments.filter(item => item.tenantId === tenantId && item.patientId === patientId).sort((a, b) => a.evaluationDate.localeCompare(b.evaluationDate));
+  const confirmed = assessments.filter(item => item.status === 'CONFIRMED' && Number.isFinite(item.total));
+  const admission = confirmed.find(item => item.stage === 'ADMISSION') || confirmed[0] || null;
+  const latest = confirmed.at(-1) || null;
+  const gain = admission && latest ? latest.total - admission.total : null;
+  const days = admission && latest ? Math.max(0, Math.round((new Date(`${latest.evaluationDate}T00:00:00Z`) - new Date(`${admission.evaluationDate}T00:00:00Z`)) / 86400000)) : null;
+  return { assessments, admission, latest, gain, days, efficiency: gain != null && days > 0 ? Math.round(gain / days * 1000) / 1000 : null, hasMissing: assessments.some(item => item.missingItems?.length), nextDue: latest ? new Date(new Date(`${latest.evaluationDate}T00:00:00Z`).getTime() + 14 * 86400000).toISOString().slice(0, 10) : null };
 }
 
 function rehabPlanSource(patient, tenantId) {
@@ -1485,6 +1517,7 @@ const server = http.createServer(async (req, res) => {
         const latestPlan = plans[0] || null;
         const context = db.rehabPlanContexts.find(item => item.tenantId === identity.tenantId && item.patientId === patient.id) || null;
         const jobs = db.jobs.filter(job => job.tenantId === identity.tenantId && job.patientId === patient.id && job.result);
+        const fimSummary = fimPatientSummary(identity.tenantId, patient.id);
         const fimValues = jobs.flatMap(job => {
           const result = job.confirmedResult || job.result;
           return (result?.fields || []).filter(field => /FIM|機能的自立度評価/i.test(`${result?.documentType || ''} ${field.label || ''}`) && String(field.value || '').trim()).map(field => ({ label: safeText(field.label, 200), value: safeText(field.value, 100), date: jobEvaluationDate(job) }));
@@ -1493,8 +1526,9 @@ const server = http.createServer(async (req, res) => {
         return {
           patientId: patient.id, facilityPatientId: patient.facilityPatientId, name: patient.name,
           planStatus: latestPlan?.status || 'NONE', planUpdatedAt: latestPlan?.updatedAt || null,
-          contextStatus: context?.dataStatus || 'NONE', fimRegistered: fimValues.length > 0,
-          fimLatest: fimValues.sort((a, b) => String(b.date).localeCompare(String(a.date)))[0] || null,
+          contextStatus: context?.dataStatus || 'NONE', fimRegistered: Boolean(fimSummary.latest) || fimValues.length > 0,
+          fimLatest: fimSummary.latest ? { value: fimSummary.latest.total, date: fimSummary.latest.evaluationDate, motorTotal: fimSummary.latest.motorTotal, cognitiveTotal: fimSummary.latest.cognitiveTotal } : (fimValues.sort((a, b) => String(b.date).localeCompare(String(a.date)))[0] || null),
+          fimGain: fimSummary.gain, fimEfficiency: fimSummary.efficiency, fimMissing: fimSummary.hasMissing, fimNextDue: fimSummary.nextDue,
           reviewComments, dischargeDestination: safeText(context?.dischargeDestination, 500),
           hasDischargeIssue: Boolean(context && (!context.dischargeDestination || context.unresolvedQuestions || context.risks)),
         };
@@ -1524,6 +1558,28 @@ const server = http.createServer(async (req, res) => {
         },
         goals, latestSnapshot, actions, patients: patientRows,
       });
+    }
+    if (req.method === 'GET' && url.pathname === '/api/fim-assessments') {
+      const patientId = safeText(url.searchParams.get('patientId'));
+      const patient = db.patients.find(item => item.tenantId === identity.tenantId && item.id === patientId);
+      if (!patient) return sendJson(res, 404, { error: '患者が見つかりません' });
+      return sendJson(res, 200, fimPatientSummary(identity.tenantId, patientId));
+    }
+    if (req.method === 'POST' && url.pathname === '/api/fim-assessments') {
+      const body = await readJson(req);
+      const patient = db.patients.find(item => item.tenantId === identity.tenantId && item.id === body.patientId);
+      if (!patient) return sendJson(res, 400, { error: '患者を選択してください' });
+      const normalized = normalizeFimAssessment(body);
+      if (!normalized.evaluationDate) return sendJson(res, 400, { error: '評価日を入力してください' });
+      const timestamp = now();
+      const assessment = { id: id('fim'), tenantId: identity.tenantId, patientId: patient.id, patientLabel: `${patient.facilityPatientId}｜${patient.name}`, ...normalized, createdAt: timestamp, updatedAt: timestamp, createdBy: safeText(identity.hospitalName || identity.userId, 200), revisions: [] };
+      db.fimAssessments.push(assessment); await persist(); return sendJson(res, 201, assessment);
+    }
+    const fimAssessmentMatch = /^\/api\/fim-assessments\/([^/]+)$/.exec(url.pathname);
+    if (req.method === 'PUT' && fimAssessmentMatch) {
+      const assessment = db.fimAssessments.find(item => item.tenantId === identity.tenantId && item.id === fimAssessmentMatch[1]);
+      if (!assessment) return sendJson(res, 404, { error: 'FIM評価が見つかりません' });
+      const body = await readJson(req); const timestamp = now(); assessment.revisions = Array.isArray(assessment.revisions) ? assessment.revisions : []; assessment.revisions.push({ at: timestamp, by: safeText(identity.hospitalName || identity.userId, 200), data: normalizeFimAssessment(assessment) }); Object.assign(assessment, normalizeFimAssessment(body, assessment), { updatedAt: timestamp, updatedBy: safeText(identity.hospitalName || identity.userId, 200) }); await persist(); return sendJson(res, 200, assessment);
     }
     if (req.method === 'PUT' && url.pathname === '/api/outcome-goals') {
       const body = await readJson(req);
