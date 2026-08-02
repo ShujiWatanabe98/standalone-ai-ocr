@@ -46,7 +46,7 @@ const allowedImageTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const databaseUrl = process.env.DATABASE_URL || '';
 const sqlPool = databaseUrl ? new pg.Pool({ connectionString: databaseUrl }) : null;
 
-let db = { version: 11, hospitals: [], patients: [], therapists: [], jobs: [], rehabRecords: [], rehabVoiceSessions: [], rehabPlans: [], rehabPlanContexts: [], outcomeGoals: [], outcomeSnapshots: [], outcomeActions: [], fimAssessments: [] };
+let db = { version: 12, hospitals: [], patients: [], therapists: [], jobs: [], rehabRecords: [], rehabVoiceSessions: [], rehabPlans: [], rehabPlanContexts: [], outcomeGoals: [], outcomeSnapshots: [], outcomeActions: [], fimAssessments: [], recoveryWardProfiles: [] };
 let writeChain = Promise.resolve();
 
 if (!['127.0.0.1', 'localhost', '::1'].includes(host) && (!authUser || !authPassword || !encryptionKey)) {
@@ -92,7 +92,8 @@ if (!Array.isArray(db.outcomeGoals)) db.outcomeGoals = [];
 if (!Array.isArray(db.outcomeSnapshots)) db.outcomeSnapshots = [];
 if (!Array.isArray(db.outcomeActions)) db.outcomeActions = [];
 if (!Array.isArray(db.fimAssessments)) db.fimAssessments = [];
-db.version = Math.max(Number(db.version) || 0, 11);
+if (!Array.isArray(db.recoveryWardProfiles)) db.recoveryWardProfiles = [];
+db.version = Math.max(Number(db.version) || 0, 12);
 const outcomeGoalTemplates = [
   { key: 'homeReturnRate', label: '在宅復帰率', unit: '%', publicBaseline: 83, proposedTarget: 85, direction: 'UP', sourceLabel: '西大和リハビリテーション病院 公開実績', sourceUrl: 'https://www.nishiyamato.net/reason/' },
   { key: 'fimGain', label: 'FIM改善', unit: '点', publicBaseline: 27.6, proposedTarget: 30, direction: 'UP', sourceLabel: '西大和リハビリテーション病院 公開実績', sourceUrl: 'https://www.nishiyamato.net/reason/' },
@@ -273,6 +274,18 @@ function normalizeFimAssessment(body, previous = {}) {
     status: body.status === 'CONFIRMED' ? 'CONFIRMED' : 'DRAFT',
   };
 }
+function normalizeRecoveryWardProfile(body, previous = {}) {
+  const date = key => /^\d{4}-\d{2}-\d{2}$/.test(String(body[key] || '')) ? body[key] : (previous[key] || '');
+  const limitDays = Number(body.limitDays ?? previous.limitDays);
+  const fimIntervalDays = Number(body.fimIntervalDays ?? previous.fimIntervalDays);
+  return {
+    onsetDate: date('onsetDate'), admissionDate: date('admissionDate'), plannedDischargeDate: date('plannedDischargeDate'), dischargeDate: date('dischargeDate'),
+    diseaseCategory: safeText(body.diseaseCategory ?? previous.diseaseCategory, 500),
+    limitDays: Number.isInteger(limitDays) && limitDays >= 1 && limitDays <= 365 ? limitDays : null,
+    fimIntervalDays: Number.isInteger(fimIntervalDays) && fimIntervalDays >= 1 && fimIntervalDays <= 90 ? fimIntervalDays : 14,
+    wardName: safeText(body.wardName ?? previous.wardName, 200), note: safeText(body.note ?? previous.note, 2000),
+  };
+}
 function fimPatientSummary(tenantId, patientId) {
   const assessments = db.fimAssessments.filter(item => item.tenantId === tenantId && item.patientId === patientId).sort((a, b) => a.evaluationDate.localeCompare(b.evaluationDate));
   const confirmed = assessments.filter(item => item.status === 'CONFIRMED' && Number.isFinite(item.total));
@@ -280,7 +293,11 @@ function fimPatientSummary(tenantId, patientId) {
   const latest = confirmed.at(-1) || null;
   const gain = admission && latest ? latest.total - admission.total : null;
   const days = admission && latest ? Math.max(0, Math.round((new Date(`${latest.evaluationDate}T00:00:00Z`) - new Date(`${admission.evaluationDate}T00:00:00Z`)) / 86400000)) : null;
-  return { assessments, admission, latest, gain, days, efficiency: gain != null && days > 0 ? Math.round(gain / days * 1000) / 1000 : null, hasMissing: assessments.some(item => item.missingItems?.length), nextDue: latest ? new Date(new Date(`${latest.evaluationDate}T00:00:00Z`).getTime() + 14 * 86400000).toISOString().slice(0, 10) : null };
+  const profile = db.recoveryWardProfiles.find(item => item.tenantId === tenantId && item.patientId === patientId) || null;
+  const interval = profile?.fimIntervalDays || 14;
+  const nextDue = latest ? new Date(new Date(`${latest.evaluationDate}T00:00:00Z`).getTime() + interval * 86400000).toISOString().slice(0, 10) : profile?.admissionDate || null;
+  const limitDate = profile?.admissionDate && profile?.limitDays ? new Date(new Date(`${profile.admissionDate}T00:00:00Z`).getTime() + (profile.limitDays - 1) * 86400000).toISOString().slice(0, 10) : null;
+  return { assessments, admission, latest, gain, days, efficiency: gain != null && days > 0 ? Math.round(gain / days * 1000) / 1000 : null, hasMissing: assessments.some(item => item.missingItems?.length), nextDue, overdue: Boolean(nextDue && nextDue < new Date().toISOString().slice(0, 10) && !profile?.dischargeDate), limitDate, profile };
 }
 
 function rehabPlanSource(patient, tenantId) {
@@ -1528,7 +1545,8 @@ const server = http.createServer(async (req, res) => {
           planStatus: latestPlan?.status || 'NONE', planUpdatedAt: latestPlan?.updatedAt || null,
           contextStatus: context?.dataStatus || 'NONE', fimRegistered: Boolean(fimSummary.latest) || fimValues.length > 0,
           fimLatest: fimSummary.latest ? { value: fimSummary.latest.total, date: fimSummary.latest.evaluationDate, motorTotal: fimSummary.latest.motorTotal, cognitiveTotal: fimSummary.latest.cognitiveTotal } : (fimValues.sort((a, b) => String(b.date).localeCompare(String(a.date)))[0] || null),
-          fimGain: fimSummary.gain, fimEfficiency: fimSummary.efficiency, fimMissing: fimSummary.hasMissing, fimNextDue: fimSummary.nextDue,
+          fimGain: fimSummary.gain, fimEfficiency: fimSummary.efficiency, fimMissing: fimSummary.hasMissing, fimNextDue: fimSummary.nextDue, fimOverdue: fimSummary.overdue,
+          wardProfile: fimSummary.profile, limitDate: fimSummary.limitDate,
           reviewComments, dischargeDestination: safeText(context?.dischargeDestination, 500),
           hasDischargeIssue: Boolean(context && (!context.dischargeDestination || context.unresolvedQuestions || context.risks)),
         };
@@ -1559,11 +1577,50 @@ const server = http.createServer(async (req, res) => {
         goals, latestSnapshot, actions, patients: patientRows,
       });
     }
+    if (req.method === 'GET' && url.pathname === '/api/recovery-ward-profile') {
+      const patientId = safeText(url.searchParams.get('patientId'));
+      const patient = db.patients.find(item => item.tenantId === identity.tenantId && item.id === patientId);
+      if (!patient) return sendJson(res, 404, { error: '患者が見つかりません' });
+      const profile = db.recoveryWardProfiles.find(item => item.tenantId === identity.tenantId && item.patientId === patientId);
+      return sendJson(res, 200, profile || { patientId, ...normalizeRecoveryWardProfile({}) });
+    }
+    if (req.method === 'PUT' && url.pathname === '/api/recovery-ward-profile') {
+      const body = await readJson(req);
+      const patient = db.patients.find(item => item.tenantId === identity.tenantId && item.id === body.patientId);
+      if (!patient) return sendJson(res, 400, { error: '患者を選択してください' });
+      const timestamp = now(); let profile = db.recoveryWardProfiles.find(item => item.tenantId === identity.tenantId && item.patientId === patient.id);
+      if (!profile) { profile = { id: id('ward-profile'), tenantId: identity.tenantId, patientId: patient.id, createdAt: timestamp, revisions: [] }; db.recoveryWardProfiles.push(profile); }
+      else { profile.revisions = Array.isArray(profile.revisions) ? profile.revisions : []; profile.revisions.push({ at: timestamp, by: safeText(identity.hospitalName || identity.userId, 200), data: normalizeRecoveryWardProfile(profile) }); }
+      Object.assign(profile, normalizeRecoveryWardProfile(body, profile), { updatedAt: timestamp, updatedBy: safeText(identity.hospitalName || identity.userId, 200) }); await persist(); return sendJson(res, 200, { ...profile, summary: fimPatientSummary(identity.tenantId, patient.id) });
+    }
     if (req.method === 'GET' && url.pathname === '/api/fim-assessments') {
       const patientId = safeText(url.searchParams.get('patientId'));
       const patient = db.patients.find(item => item.tenantId === identity.tenantId && item.id === patientId);
       if (!patient) return sendJson(res, 404, { error: '患者が見つかりません' });
       return sendJson(res, 200, fimPatientSummary(identity.tenantId, patientId));
+    }
+    if (req.method === 'GET' && url.pathname === '/api/fim-export.csv') {
+      const quote = value => `"${String(value ?? '').replaceAll('"', '""')}"`;
+      const headers = ['facilityPatientId','patientName','stage','evaluationDate','evaluator','status','locomotionMode',...fimItems,'motorTotal','cognitiveTotal','total','note'];
+      const rows = db.fimAssessments.filter(item => item.tenantId === identity.tenantId).sort((a, b) => a.evaluationDate.localeCompare(b.evaluationDate)).map(item => {
+        const patient = db.patients.find(candidate => candidate.tenantId === identity.tenantId && candidate.id === item.patientId);
+        const values = [patient?.facilityPatientId, patient?.name,item.stage,item.evaluationDate,item.evaluator,item.status,item.locomotionMode,...fimItems.map(key => item.scores?.[key]),item.motorTotal,item.cognitiveTotal,item.total,item.note];
+        return values.map(quote).join(',');
+      });
+      const csv = `\uFEFF${headers.join(',')}\r\n${rows.join('\r\n')}\r\n`;
+      res.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="fim-assessments.csv"', 'Cache-Control': 'no-store' }); res.end(csv); return;
+    }
+    if (req.method === 'POST' && url.pathname === '/api/fim-import') {
+      const body = await readJson(req); const rows = Array.isArray(body.rows) ? body.rows.slice(0, 1000) : [];
+      let imported = 0; const errors = [];
+      for (let index = 0; index < rows.length; index++) {
+        const row = rows[index]; const patient = db.patients.find(item => item.tenantId === identity.tenantId && item.facilityPatientId === safeText(row.facilityPatientId, 100));
+        if (!patient) { errors.push({ row: index + 2, error: '患者IDが見つかりません' }); continue; }
+        const normalized = normalizeFimAssessment({ ...row, scores: Object.fromEntries(fimItems.map(key => [key, row[key]])) });
+        if (!normalized.evaluationDate) { errors.push({ row: index + 2, error: '評価日が不正です' }); continue; }
+        const timestamp = now(); db.fimAssessments.push({ id: id('fim'), tenantId: identity.tenantId, patientId: patient.id, patientLabel: `${patient.facilityPatientId}｜${patient.name}`, ...normalized, createdAt: timestamp, updatedAt: timestamp, createdBy: safeText(identity.hospitalName || identity.userId, 200), revisions: [], importSource: 'CSV' }); imported += 1;
+      }
+      if (imported) await persist(); return sendJson(res, 200, { imported, errors });
     }
     if (req.method === 'POST' && url.pathname === '/api/fim-assessments') {
       const body = await readJson(req);

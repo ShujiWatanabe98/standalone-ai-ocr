@@ -1,6 +1,10 @@
 .fim-input{margin:14px 0;border:1px solid #9ebcda;border-radius:10px;background:#f9fcff}
 .fim-input>summary{padding:12px;cursor:pointer;color:#173b67;font-weight:800}
 .fim-input form{padding:0 12px 12px}
+.fim-input #wardProfileForm{margin:0 12px 14px;padding:12px;border:1px solid #d5e2ee;border-radius:8px;background:#fff}
+.fim-data-tools{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin:0 12px 12px;padding:9px;border-radius:8px;background:#edf5ff;font-size:12px}
+.fim-data-tools a,.fim-data-tools label{margin:0;padding:6px 9px;border:1px solid #9ebcda;border-radius:6px;background:#fff;color:#173b67;font-weight:700;text-decoration:none;cursor:pointer}
+.fim-data-tools input{display:none}
 .fim-meta{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
 .fim-meta label,.fim-score-grid label{margin:0}
 .fim-input h5{margin:14px 0 8px;color:#173b67}
