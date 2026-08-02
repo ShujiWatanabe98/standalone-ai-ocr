@@ -348,6 +348,29 @@ ${JSON.stringify(source)}`;
   const parsed = parsePlainModelJson(extractOutputText(payload));
   return Object.fromEntries(fields.map(field => [field, safeText(parsed?.[field], field === 'evidence' || field.endsWith('Comments') ? 12000 : 6000)]));
 }
+
+async function extractFimAssessment(apiKey, imageDataUrl) {
+  const schema = Object.fromEntries(fimItems.map(key => [key, null]));
+  const prompt = `あなたはFIM（機能的自立度評価法）評価票の読み取り支援AIです。画像に明確に記載された18項目の得点だけを読み取ってください。
+
+厳守事項:
+- 得点は1から7の整数。空欄、判読不能、項目を特定できない場合はnull。
+- 合計欄から各項目を逆算しない。推測補完しない。
+- 患者名などの個人情報は出力しない。
+- assessmentDateは画像に明記された場合だけYYYY-MM-DD、なければ空文字。
+- stageは入棟時、定期、退棟時の明記がある場合だけADMISSION、PERIODIC、DISCHARGE。判断できなければPERIODIC。
+- commentsには判読不能、複数候補、様式上の注意を日本語で記載。
+- JSONだけを返す。
+
+出力形式:
+${JSON.stringify({ assessmentDate: '', stage: 'PERIODIC', scores: schema, confidence: 0, comments: '' })}`;
+  const response = await fetch('https://api.openai.com/v1/responses', { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model, store: false, reasoning: { effort: reasoningEffort }, input: [{ role: 'user', content: [{ type: 'input_text', text: prompt }, { type: 'input_image', image_url: imageDataUrl, detail: 'high' }] }] }), signal: AbortSignal.timeout(120000) });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload?.error?.message || `OpenAI API error ${response.status}`);
+  const parsed = parsePlainModelJson(extractOutputText(payload));
+  const scores = Object.fromEntries(fimItems.map(key => { const value = Number(parsed?.scores?.[key]); return [key, Number.isInteger(value) && value >= 1 && value <= 7 ? value : null]; }));
+  return { assessmentDate: /^\d{4}-\d{2}-\d{2}$/.test(String(parsed?.assessmentDate || '')) ? parsed.assessmentDate : '', stage: ['ADMISSION','PERIODIC','DISCHARGE'].includes(parsed?.stage) ? parsed.stage : 'PERIODIC', scores, confidence: Math.max(0, Math.min(1, Number(parsed?.confidence) || 0)), comments: safeText(parsed?.comments, 2000), responseId: safeText(payload.id, 120) };
+}
 function numericFieldMap(job) {
   const result = job.confirmedResult || job.result;
   return new Map((result?.fields || []).flatMap(field => {
@@ -1540,6 +1563,12 @@ const server = http.createServer(async (req, res) => {
           return (result?.fields || []).filter(field => /FIM|機能的自立度評価/i.test(`${result?.documentType || ''} ${field.label || ''}`) && String(field.value || '').trim()).map(field => ({ label: safeText(field.label, 200), value: safeText(field.value, 100), date: jobEvaluationDate(job) }));
         });
         const reviewComments = [latestPlan?.aiReviewComments, latestPlan?.therapistReviewComments, context?.unresolvedQuestions].filter(value => String(value || '').trim()).length;
+        const profileRequired = ['admissionDate','diseaseCategory','limitDays','plannedDischargeDate'];
+        const dataQualityIssues = [
+          ...(!fimSummary.latest ? ['FIM未登録'] : []), ...(fimSummary.overdue ? ['FIM評価期限超過'] : []), ...(fimSummary.hasMissing ? ['FIM未入力項目'] : []),
+          ...(!fimSummary.profile ? ['病棟情報未登録'] : profileRequired.filter(key => !fimSummary.profile[key]).map(key => ({ admissionDate:'入棟日未入力', diseaseCategory:'疾患区分未入力', limitDays:'算定上限日数未入力', plannedDischargeDate:'退棟予定日未入力' })[key])),
+          ...(latestPlan?.status !== 'CONFIRMED' ? ['計画未確定'] : []), ...(reviewComments ? ['確認コメント未解決'] : []),
+        ];
         return {
           patientId: patient.id, facilityPatientId: patient.facilityPatientId, name: patient.name,
           planStatus: latestPlan?.status || 'NONE', planUpdatedAt: latestPlan?.updatedAt || null,
@@ -1549,6 +1578,7 @@ const server = http.createServer(async (req, res) => {
           wardProfile: fimSummary.profile, limitDate: fimSummary.limitDate,
           reviewComments, dischargeDestination: safeText(context?.dischargeDestination, 500),
           hasDischargeIssue: Boolean(context && (!context.dischargeDestination || context.unresolvedQuestions || context.risks)),
+          dataQualityIssues,
         };
       }).sort((a, b) => (b.reviewComments - a.reviewComments) || a.facilityPatientId.localeCompare(b.facilityPatientId));
       const confirmedCount = patientRows.filter(row => row.planStatus === 'CONFIRMED').length;
@@ -1573,6 +1603,7 @@ const server = http.createServer(async (req, res) => {
           fimRegisteredCount: patientRows.filter(row => row.fimRegistered).length,
           planReviewCount: patientRows.filter(row => row.planStatus !== 'CONFIRMED' || row.reviewComments > 0).length,
           dischargeIssueCount: patientRows.filter(row => row.hasDischargeIssue).length,
+          dataQualityIssueCount: patientRows.filter(row => row.dataQualityIssues.length).length,
         },
         goals, latestSnapshot, actions, patients: patientRows,
       });
@@ -1598,6 +1629,14 @@ const server = http.createServer(async (req, res) => {
       const patient = db.patients.find(item => item.tenantId === identity.tenantId && item.id === patientId);
       if (!patient) return sendJson(res, 404, { error: '患者が見つかりません' });
       return sendJson(res, 200, fimPatientSummary(identity.tenantId, patientId));
+    }
+    if (req.method === 'POST' && url.pathname === '/api/fim-ocr') {
+      const body = await readJson(req);
+      if (!/^data:image\/(?:jpeg|png|webp);base64,/i.test(String(body.imageDataUrl || ''))) return sendJson(res, 400, { error: 'FIM評価票のJPEG、PNG、WebP画像を選択してください' });
+      const apiKey = process.env.OPENAI_API_KEY;
+      if (!apiKey) return sendJson(res, 503, { error: 'OPENAI_API_KEYが設定されていません' });
+      try { return sendJson(res, 200, await extractFimAssessment(apiKey, body.imageDataUrl)); }
+      catch (error) { return sendJson(res, 502, { error: `FIM評価票を読み取れませんでした: ${safeText(error.message, 500)}` }); }
     }
     if (req.method === 'GET' && url.pathname === '/api/fim-export.csv') {
       const quote = value => `"${String(value ?? '').replaceAll('"', '""')}"`;

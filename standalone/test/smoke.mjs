@@ -424,6 +424,8 @@ const fimExportResponse = await fetch(`${base}/api/fim-export.csv`, { headers: {
 assert.equal(fimExportResponse.status, 200);
 assert.match(fimExportResponse.headers.get('content-type'), /text\/csv/);
 assert.match(await fimExportResponse.text(), /facilityPatientId/);
+const fimOcrNoKeyResponse = await fetch(`${base}/api/fim-ocr`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: auth }, body: JSON.stringify({ imageDataUrl: 'data:image/png;base64,iVBORw0KGgo=' }) });
+assert.equal(fimOcrNoKeyResponse.status, 503);
 const importRow = { facilityPatientId: patient.facilityPatientId, stage: 'DISCHARGE', evaluationDate: '2026-08-21', evaluator: 'CSV Test', status: 'CONFIRMED', locomotionMode: 'WALK', ...Object.fromEntries(fimKeys.map(key => [key, '5'])) };
 const fimImportResponse = await fetch(`${base}/api/fim-import`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: auth }, body: JSON.stringify({ rows: [importRow] }) });
 assert.equal(fimImportResponse.status, 200);
@@ -434,6 +436,7 @@ const outcomeCenter = await outcomeCenterResponse.json();
 assert.equal(outcomeCenter.summary.patientCount, 4);
 assert.equal(outcomeCenter.summary.planReviewCount >= 1, true);
 assert.equal(outcomeCenter.summary.fimRegisteredCount, 1);
+assert.equal(outcomeCenter.summary.dataQualityIssueCount >= 1, true);
 assert.equal(outcomeCenter.patients.find(item => item.patientId === patient.id).fimGain, 36);
 assert.equal(outcomeCenter.patients.some(item => item.patientId === patient.id && item.planStatus === 'CONFIRMED'), true);
 assert.equal(outcomeCenter.goals.some(goal => goal.key === 'homeReturnRate' && goal.publicBaseline === 83), true);
