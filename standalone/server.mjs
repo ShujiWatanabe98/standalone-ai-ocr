@@ -323,8 +323,13 @@ function conferenceBrief(tenantId, patient) {
   const voice = db.rehabVoiceSessions.filter(item => item.tenantId === tenantId && item.patientId === patient.id).sort((a, b) => String(b.updatedAt || b.createdAt).localeCompare(String(a.updatedAt || a.createdAt)))[0] || null;
   const blockers = discharge.tasks.filter(task => task.status === 'BLOCKING').map(task => ({ text: `${task.label}: ${task.note || '対応内容未入力'}`, source: `退院支援ボード ${task.label}` }));
   const missing = [...(fim.hasMissing ? [{ text: 'FIMに未入力項目があります', source: 'FIM評価' }] : []), ...(fim.overdue ? [{ text: 'FIM評価期限を超過しています', source: 'FIM評価予定' }] : []), ...(discharge.ownerMissing ? [{ text: `退院支援の担当未設定が${discharge.ownerMissing}件あります`, source: '退院支援ボード' }] : []), ...(!plan ? [{ text: 'リハビリAI計画が未作成です', source: 'リハビリAI計画' }] : [])];
+  const contradictions = [];
+  const destination = `${plan?.dischargeGoal || ''} ${plan?.patientWishes || ''}`;
+  if (/自宅|在宅/.test(destination) && discharge.tasks.some(task => ['HOME','FAMILY','SERVICES'].includes(task.key) && task.status === 'BLOCKING')) contradictions.push({ text: '自宅退院の希望・目標に対して、住環境・家族・地域サービスの阻害要因が残っています', source: 'リハビリAI計画 × 退院支援ボード', needsReview: true });
+  if (/自立|独歩/.test(`${plan?.activity || ''} ${plan?.shortTermGoals || ''}`) && discharge.tasks.some(task => ['TRANSFER','WALKING'].includes(task.key) && task.status === 'BLOCKING')) contradictions.push({ text: '移動自立の計画記載と、移乗・歩行の退院阻害判定が一致していません', source: 'リハビリAI計画 × 退院支援ボード', needsReview: true });
+  if (/常食|経口|自立/.test(`${plan?.nutritionAndOral || ''} ${plan?.activity || ''}`) && discharge.tasks.some(task => ['EATING','SWALLOWING'].includes(task.key) && task.status === 'BLOCKING')) contradictions.push({ text: '食事・嚥下の計画記載と退院阻害判定に差があります', source: 'リハビリAI計画 × 退院支援ボード', needsReview: true });
   const decisions = [...blockers.slice(0, 3).map(item => ({ text: `${item.text}の対応方針を決定`, source: item.source })), ...(fim.gain != null ? [{ text: `FIM利得${fim.gain}点を踏まえ次期目標を確認`, source: 'FIM推移' }] : [{ text: 'FIM評価日と次期目標を確認', source: 'FIM評価' }]), ...(discharge.tasks.length ? [{ text: `退院支援の追跡完了率${discharge.trackingRate}%を100%へ上げる担当と期限を決定`, source: '退院支援ボード' }] : [])];
-  return { patient: { id: patient.id, facilityPatientId: patient.facilityPatientId, name: patient.name }, generatedAt: now(), fim: { latest: fim.latest, gain: fim.gain, efficiency: fim.efficiency, nextDue: fim.nextDue }, discharge: { trackingRate: discharge.trackingRate, readiness: discharge.readiness, blocking: discharge.blocking, overdue: discharge.overdue }, changes: [fim.latest ? `最新FIM ${fim.latest.total ?? '未完成'}点（${fim.latest.evaluationDate}）` : 'FIM未登録', fim.gain != null ? `入棟時から${fim.gain >= 0 ? '+' : ''}${fim.gain}点` : 'FIM利得未算出', voice?.summary ? safeText(voice.summary, 500) : '最新の音声要約なし'], blockers, missing, decisions, sources: ['FIM評価・推移', '患者別退院支援ボード', ...(plan ? ['リハビリAI計画'] : []), ...(voice ? ['リハビリボイス'] : [])], previousConference: db.conferences.filter(item => item.tenantId === tenantId && item.patientId === patient.id).sort((a, b) => String(b.heldAt).localeCompare(String(a.heldAt)))[0] || null };
+  return { patient: { id: patient.id, facilityPatientId: patient.facilityPatientId, name: patient.name }, generatedAt: now(), fim: { latest: fim.latest, gain: fim.gain, efficiency: fim.efficiency, nextDue: fim.nextDue }, discharge: { trackingRate: discharge.trackingRate, readiness: discharge.readiness, blocking: discharge.blocking, overdue: discharge.overdue }, changes: [fim.latest ? `最新FIM ${fim.latest.total ?? '未完成'}点（${fim.latest.evaluationDate}）` : 'FIM未登録', fim.gain != null ? `入棟時から${fim.gain >= 0 ? '+' : ''}${fim.gain}点` : 'FIM利得未算出', voice?.summary ? safeText(voice.summary, 500) : '最新の音声要約なし'], blockers, missing, contradictions, decisions, sources: ['FIM評価・推移', '患者別退院支援ボード', ...(plan ? ['リハビリAI計画'] : []), ...(voice ? ['リハビリボイス'] : [])], previousConference: db.conferences.filter(item => item.tenantId === tenantId && item.patientId === patient.id).sort((a, b) => String(b.heldAt).localeCompare(String(a.heldAt)))[0] || null };
 }
 
 function rehabPlanSource(patient, tenantId) {
@@ -1658,6 +1663,15 @@ const server = http.createServer(async (req, res) => {
       db.conferences.push(conference);
       if (action) db.outcomeActions.push({ id: id('outcome-action'), tenantId: identity.tenantId, patientId: patient.id, patientLabel: `${patient.facilityPatientId}｜${patient.name}`, category: 'CONFERENCE', title: action, owner, dueDate, status: 'OPEN', createdAt: timestamp, updatedAt: timestamp });
       await persist(); return sendJson(res, 201, conference);
+    }
+    const conferenceMatch = /^\/api\/conferences\/([^/]+)$/.exec(url.pathname);
+    if (req.method === 'PUT' && conferenceMatch) {
+      const conference = db.conferences.find(item => item.tenantId === identity.tenantId && item.id === conferenceMatch[1]);
+      if (!conference) return sendJson(res, 404, { error: 'カンファレンス記録が見つかりません' });
+      const body = await readJson(req); const timestamp = now(); conference.revisions = Array.isArray(conference.revisions) ? conference.revisions : [];
+      conference.revisions.push({ at: timestamp, by: safeText(identity.hospitalName || identity.userId, 200), data: { heldAt: conference.heldAt, participants: conference.participants, minutes: conference.minutes, decision: conference.decision, action: conference.action, owner: conference.owner, dueDate: conference.dueDate } });
+      Object.assign(conference, { heldAt: /^\d{4}-\d{2}-\d{2}$/.test(String(body.heldAt || '')) ? body.heldAt : conference.heldAt, participants: safeText(body.participants, 1000), minutes: safeText(body.minutes, 5000), decision: safeText(body.decision, 2000), action: safeText(body.action, 1000), owner: safeText(body.owner, 200), dueDate: /^\d{4}-\d{2}-\d{2}$/.test(String(body.dueDate || '')) ? body.dueDate : '', updatedAt: timestamp, updatedBy: safeText(identity.hospitalName || identity.userId, 200) });
+      await persist(); return sendJson(res, 200, conference);
     }
     if (req.method === 'GET' && url.pathname === '/api/discharge-board') {
       const patientId = safeText(url.searchParams.get('patientId'));

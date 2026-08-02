@@ -7,5 +7,6 @@
 .conference-stats b{display:block;font-size:18px;color:#173b67}
 .conference-board h5{margin:12px 0 5px}.conference-board ul{margin:0;padding-left:22px}.conference-board li{margin:5px 0}.conference-board li small{display:block;color:#657383}
 .conference-sources{padding:8px;border-radius:7px;background:#eef3f9;font-size:11px}
+.conference-contradictions{padding:8px;border-radius:8px;background:#fff8e6;border:1px solid #efd797}.conference-previous{padding:8px;border-radius:8px;background:#f4f7fb}.conference-previous button{margin-bottom:6px}
 .conference-board form{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:12px}.conference-board form .wide{grid-column:1/-1}.conference-board textarea{margin:0}
 @media(max-width:760px){.conference-toolbar,.conference-board form{grid-template-columns:1fr}.conference-stats{grid-template-columns:1fr 1fr}.conference-board form .wide{grid-column:auto}}
