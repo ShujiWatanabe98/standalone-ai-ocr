@@ -64,3 +64,16 @@ main{width:100%;max-width:1680px;padding:clamp(10px,2vw,24px)}
 #therapistForm input {
   font-size: 16px;
 }
+
+.patient-list-scroll {
+  display: grid;
+  gap: 8px;
+  max-height: 792px;
+  overflow-y: auto;
+  padding-right: 6px;
+  scrollbar-gutter: stable;
+}
+
+.patient-list-scroll .card {
+  min-height: 72px;
+}
