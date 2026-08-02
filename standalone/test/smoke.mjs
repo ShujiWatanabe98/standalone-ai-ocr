@@ -472,6 +472,12 @@ const fimExportResponse = await fetch(`${base}/api/fim-export.csv`, { headers: {
 assert.equal(fimExportResponse.status, 200);
 assert.match(fimExportResponse.headers.get('content-type'), /text\/csv/);
 assert.match(await fimExportResponse.text(), /facilityPatientId/);
+const managementExportResponse = await fetch(`${base}/api/outcome-management-report.csv`, { headers: { Authorization: auth } });
+assert.equal(managementExportResponse.status, 200);
+assert.match(managementExportResponse.headers.get('content-type'), /text\/csv/);
+const managementCsv = await managementExportResponse.text();
+assert.match(managementCsv, /平均FIM利得/);
+assert.doesNotMatch(managementCsv, /patientName|facilityPatientId/);
 const fimOcrNoKeyResponse = await fetch(`${base}/api/fim-ocr`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: auth }, body: JSON.stringify({ imageDataUrl: 'data:image/png;base64,iVBORw0KGgo=' }) });
 assert.equal(fimOcrNoKeyResponse.status, 503);
 const importRow = { facilityPatientId: patient.facilityPatientId, stage: 'DISCHARGE', evaluationDate: '2026-08-21', evaluator: 'CSV Test', status: 'CONFIRMED', locomotionMode: 'WALK', ...Object.fromEntries(fimKeys.map(key => [key, '5'])) };
@@ -498,6 +504,9 @@ assert.match(outcomeCenter.performanceIndexSimulation.disclaimer, /請求・届�
 assert.equal(outcomeCenter.managementDashboard.groups.length, 3);
 assert.equal(outcomeCenter.managementDashboard.groups.some(group => group.dimension === 'ward' && group.rows.some(row => row.patients >= 1)), true);
 assert.match(outcomeCenter.managementDashboard.definitions.homeReturnRate, /分子/);
+assert.equal(outcomeCenter.managementDashboard.benchmark.minimumGroupSize, 3);
+assert.match(outcomeCenter.managementDashboard.benchmark.privacyNote, /患者名・患者IDは出力しません/);
+assert.equal(outcomeCenter.managementDashboard.benchmark.rows.every(row => row.patients >= 3), true);
 const performanceSimulationResponse = await fetch(`${base}/api/outcome-performance-simulation?additionalMotorFim=2&reducedStayDays=5`, { headers: { Authorization: auth } });
 assert.equal(performanceSimulationResponse.status, 200);
 const performanceSimulation = await performanceSimulationResponse.json();
