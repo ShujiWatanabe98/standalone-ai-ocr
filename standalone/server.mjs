@@ -46,7 +46,7 @@ const allowedImageTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const databaseUrl = process.env.DATABASE_URL || '';
 const sqlPool = databaseUrl ? new pg.Pool({ connectionString: databaseUrl }) : null;
 
-let db = { version: 22, hospitals: [], patients: [], therapists: [], jobs: [], rehabRecords: [], rehabVoiceSessions: [], rehabPlans: [], rehabPlanContexts: [], outcomeGoals: [], outcomeSnapshots: [], outcomeActions: [], fimAssessments: [], recoveryWardProfiles: [], dischargeTasks: [], conferences: [], warningReviews: [], integrationRuns: [], clinicalEvents: [], pilotTimeMeasurements: [], pilotSafetyEvents: [], pilotStaffFeedback: [], pilotStudies: [] };
+let db = { version: 23, hospitals: [], patients: [], therapists: [], jobs: [], rehabRecords: [], rehabVoiceSessions: [], rehabPlans: [], rehabPlanContexts: [], outcomeGoals: [], outcomeSnapshots: [], outcomeActions: [], fimAssessments: [], recoveryWardProfiles: [], dischargeTasks: [], conferences: [], warningReviews: [], integrationRuns: [], clinicalEvents: [], pilotTimeMeasurements: [], pilotSafetyEvents: [], pilotStaffFeedback: [], pilotStudies: [], pilotApprovals: [] };
 let writeChain = Promise.resolve();
 
 if (!['127.0.0.1', 'localhost', '::1'].includes(host) && (!authUser || !authPassword || !encryptionKey)) {
@@ -102,7 +102,8 @@ if (!Array.isArray(db.pilotTimeMeasurements)) db.pilotTimeMeasurements = [];
 if (!Array.isArray(db.pilotSafetyEvents)) db.pilotSafetyEvents = [];
 if (!Array.isArray(db.pilotStaffFeedback)) db.pilotStaffFeedback = [];
 if (!Array.isArray(db.pilotStudies)) db.pilotStudies = [];
-db.version = Math.max(Number(db.version) || 0, 22);
+if (!Array.isArray(db.pilotApprovals)) db.pilotApprovals = [];
+db.version = Math.max(Number(db.version) || 0, 23);
 const outcomeGoalTemplates = [
   { key: 'homeReturnRate', label: '在宅復帰率', unit: '%', publicBaseline: 83, proposedTarget: 85, direction: 'UP', sourceLabel: '西大和リハビリテーション病院 公開実績', sourceUrl: 'https://www.nishiyamato.net/reason/' },
   { key: 'fimGain', label: 'FIM改善', unit: '点', publicBaseline: 27.6, proposedTarget: 30, direction: 'UP', sourceLabel: '西大和リハビリテーション病院 公開実績', sourceUrl: 'https://www.nishiyamato.net/reason/' },
@@ -1720,6 +1721,12 @@ const server = http.createServer(async (req, res) => {
     }
     if(req.method==='PUT'&&url.pathname==='/api/pilot/study'){
       const body=await readJson(req);const wardName=safeText(body.wardName,200),owner=safeText(body.owner,200),baselineStart=String(body.baselineStart||''),baselineEnd=String(body.baselineEnd||''),trialStart=String(body.trialStart||''),trialEnd=String(body.trialEnd||''),patientLimit=Number(body.patientLimit);const dates=[baselineStart,baselineEnd,trialStart,trialEnd];if(!wardName||!owner)return sendJson(res,400,{error:'対象病棟と実証責任者は必須です'});if(dates.some(value=>!/^\d{4}-\d{2}-\d{2}$/.test(value)))return sendJson(res,400,{error:'すべての期間を入力してください'});if(!(baselineStart<=baselineEnd&&baselineEnd<trialStart&&trialStart<=trialEnd))return sendJson(res,400,{error:'導入前測定、安全確認、試行の順になるよう期間を設定してください'});if(!Number.isInteger(patientLimit)||patientLimit<1||patientLimit>500)return sendJson(res,400,{error:'患者上限は1～500人で入力してください'});const existing=db.pilotStudies.find(item=>item.tenantId===identity.tenantId),timestamp=now();if(existing){Object.assign(existing,{wardName,owner,baselineStart,baselineEnd,trialStart,trialEnd,patientLimit,note:safeText(body.note,2000),updatedAt:timestamp,updatedBy:safeText(identity.hospitalName||identity.userId,200)});await persist();return sendJson(res,200,existing);}const study={id:id('pilot-study'),tenantId:identity.tenantId,wardName,owner,baselineStart,baselineEnd,trialStart,trialEnd,patientLimit,note:safeText(body.note,2000),createdAt:timestamp,updatedAt:timestamp,updatedBy:safeText(identity.hospitalName||identity.userId,200)};db.pilotStudies.push(study);await persist();return sendJson(res,201,study);
+    }
+    if(req.method==='GET'&&url.pathname==='/api/pilot/approvals'){
+      const roles=['HOSPITAL_DIRECTOR','INFORMATION_SECURITY','CLINICAL_REPRESENTATIVE'];const all=db.pilotApprovals.filter(item=>item.tenantId===identity.tenantId).sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt)));const latest=roles.map(role=>all.find(item=>item.role===role)||null);const approved=latest.filter(item=>item?.decision==='APPROVE').length,rejected=latest.filter(item=>item?.decision==='REJECT').length;return sendJson(res,200,{latest,history:all.slice(0,50),summary:{approved,rejected,pending:roles.length-approved-rejected,status:rejected?'REJECTED':approved===roles.length?'APPROVED':'PENDING'},note:'三者すべての承認が揃った場合だけ本導入承認済みと表示します。却下後に再申請する場合も過去の判断履歴は保持します。'});
+    }
+    if(req.method==='POST'&&url.pathname==='/api/pilot/approvals'){
+      const body=await readJson(req),role=String(body.role||'').toUpperCase(),decision=String(body.decision||'').toUpperCase(),approverName=safeText(body.approverName,200),comment=safeText(body.comment,2000);if(!['HOSPITAL_DIRECTOR','INFORMATION_SECURITY','CLINICAL_REPRESENTATIVE'].includes(role))return sendJson(res,400,{error:'承認者区分を選択してください'});if(!['APPROVE','REJECT'].includes(decision))return sendJson(res,400,{error:'承認または却下を選択してください'});if(!approverName)return sendJson(res,400,{error:'確認者名は必須です'});if(decision==='REJECT'&&!comment)return sendJson(res,400,{error:'却下理由を入力してください'});const item={id:id('pilot-approval'),tenantId:identity.tenantId,role,decision,approverName,comment,createdAt:now(),createdBy:safeText(identity.hospitalName||identity.userId,200)};db.pilotApprovals.push(item);await persist();return sendJson(res,201,item);
     }
     if (req.method === 'GET' && url.pathname === '/api/therapists') {
       return sendJson(res, 200, db.therapists

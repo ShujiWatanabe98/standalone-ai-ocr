@@ -698,6 +698,17 @@ assert.equal(studyStatus.study.wardName, '回復期病棟A');
 assert.equal(studyStatus.study.patientLimit, 10);
 assert.equal(studyStatus.phase, 'TRIAL');
 assert.equal(studyStatus.progress > 0, true);
+let approvalSummary = await fetch(`${base}/api/pilot/approvals`, { headers: { Authorization: auth } }).then(response => response.json());
+assert.equal(approvalSummary.summary.status, 'PENDING');
+for (const [role, approverName] of [['HOSPITAL_DIRECTOR','病院責任者'],['INFORMATION_SECURITY','情報管理責任者'],['CLINICAL_REPRESENTATIVE','現場代表']]) {
+  const approvalResponse = await fetch(`${base}/api/pilot/approvals`, { method: 'POST', headers: { Authorization: auth, 'Content-Type': 'application/json' }, body: JSON.stringify({ role, decision: 'APPROVE', approverName, comment: '条件を確認済み' }) });
+  assert.equal(approvalResponse.status, 201);
+}
+approvalSummary = await fetch(`${base}/api/pilot/approvals`, { headers: { Authorization: auth } }).then(response => response.json());
+assert.equal(approvalSummary.summary.status, 'APPROVED');
+assert.equal(approvalSummary.summary.approved, 3);
+assert.equal(approvalSummary.history.length, 3);
+assert.match(approvalSummary.note, /三者すべて/);
 const readinessResponse = await fetch(`${base}/api/pilot/readiness`, { headers: { Authorization: auth } });
 assert.equal(readinessResponse.status, 200);
 const readiness = await readinessResponse.json();
