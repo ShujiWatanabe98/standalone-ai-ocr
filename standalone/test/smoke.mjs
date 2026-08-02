@@ -43,6 +43,9 @@ assert.match(captureHtml, /id="refreshPatientSheets"/);
 assert.match(captureHtml, /id="deleteAllHistory"/);
 const captureApp = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
 const cameraApp = await readFile(new URL('../public/camera-capture.js', import.meta.url), 'utf8');
+const rehabSessionApp = await readFile(new URL('../public/rehab-session.js', import.meta.url), 'utf8');
+assert.match(rehabSessionApp, /data-rehab-voice-delete/);
+assert.match(rehabSessionApp, /リハビリボイス履歴を削除します/);
 const cameraCss = await readFile(new URL('../public/camera-capture.css', import.meta.url), 'utf8');
 const captureCss = await readFile(new URL('../public/capture-layout.css', import.meta.url), 'utf8');
 const patientTimelineCss = await readFile(new URL('../public/patient-timeline.css', import.meta.url), 'utf8');
@@ -386,6 +389,13 @@ const planSourceResponse = await fetch(`${base}/api/rehab-plans/source?patientId
 assert.equal(planSourceResponse.status, 200);
 const planSource = await planSourceResponse.json();
 assert.equal(planSource.latestVoice.patientLog, 'テストログ');
+const deleteVoiceSessionResponse = await fetch(`${base}/api/rehab-voice/sessions/rehab-voice-smoke-1`, { method: 'DELETE', headers: { Authorization: auth } });
+assert.equal(deleteVoiceSessionResponse.status, 200);
+assert.equal((await deleteVoiceSessionResponse.json()).deletedId, 'rehab-voice-smoke-1');
+const voiceSessionsAfterDelete = await fetch(`${base}/api/rehab-voice/sessions`, { headers: { Authorization: auth } }).then(r => r.json());
+assert.equal(voiceSessionsAfterDelete.length, 0);
+const voiceAudioAfterDelete = await fetch(`${base}/api/rehab-voice/sessions/rehab-voice-smoke-1/audio`, { headers: { Authorization: auth } });
+assert.equal(voiceAudioAfterDelete.status, 404);
 assert.equal(planSource.planContext.patientGoals, '自宅へ戻る');
 const generatePlanResponse = await fetch(`${base}/api/rehab-plans/generate`, {
   method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: auth }, body: JSON.stringify({ patientId: patient.id }),

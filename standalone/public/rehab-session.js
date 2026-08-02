@@ -60,6 +60,17 @@ async function loadRecordedAudio(id) {
   return blob;
 }
 
+async function deleteRecordedAudio(id) {
+  const database = await openAudioDatabase();
+  await new Promise((resolve, reject) => {
+    const transaction = database.transaction('recordings', 'readwrite');
+    transaction.objectStore('recordings').delete(id);
+    transaction.oncomplete = resolve;
+    transaction.onerror = () => reject(transaction.error);
+  });
+  database.close();
+}
+
 function escapeMarkup(value) {
   return String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
 }
@@ -104,9 +115,32 @@ function renderVoiceHistory() {
   const history = loadVoiceHistory();
   historyList.innerHTML = history.length ? history.map(item => `<article class="card rehab-voice-history-card">
     <div><strong>${escapeMarkup(item.patientLabel)}｜${escapeMarkup(item.therapistLabel)}</strong><p>${escapeMarkup(new Date(item.createdAt).toLocaleString('ja-JP'))}・経過時間 ${escapeMarkup(item.duration)}</p></div>
-    <div class="history-actions"><button type="button" data-rehab-voice-detail="${escapeMarkup(item.id)}">詳細</button></div>
+    <div class="history-actions"><button type="button" data-rehab-voice-detail="${escapeMarkup(item.id)}">詳細</button><button class="danger-button" type="button" data-rehab-voice-delete="${escapeMarkup(item.id)}">削除</button></div>
   </article>`).join('') : '<p>履歴はありません。</p>';
   historyList.querySelectorAll('[data-rehab-voice-detail]').forEach(button => button.addEventListener('click', () => openVoiceHistoryDetail(button.dataset.rehabVoiceDetail)));
+  historyList.querySelectorAll('[data-rehab-voice-delete]').forEach(button => button.addEventListener('click', () => deleteVoiceHistory(button.dataset.rehabVoiceDelete, button)));
+}
+
+async function deleteVoiceHistory(id, button) {
+  const item = loadVoiceHistory().find(candidate => candidate.id === id);
+  if (!item) return;
+  const confirmed = window.confirm(`${item.patientLabel}のリハビリボイス履歴を削除します。\n同じ施設内のこの履歴と録音音声が削除され、元に戻せません。削除しますか？`);
+  if (!confirmed) return;
+  button.disabled = true;
+  button.textContent = '削除中…';
+  try {
+    const response = await fetch(`/api/rehab-voice/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+    localStorage.setItem(historyStorageKey, JSON.stringify(loadVoiceHistory().filter(candidate => candidate.id !== id)));
+    await deleteRecordedAudio(id).catch(() => {});
+    renderVoiceHistory();
+    status.textContent = `${item.patientLabel}のリハビリボイス履歴を削除しました。`;
+  } catch (error) {
+    button.disabled = false;
+    button.textContent = '削除';
+    status.textContent = `履歴を削除できませんでした（${error.message}）。`;
+  }
 }
 
 function openVoiceHistoryDetail(id) {
