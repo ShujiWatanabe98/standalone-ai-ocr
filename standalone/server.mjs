@@ -46,7 +46,7 @@ const allowedImageTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const databaseUrl = process.env.DATABASE_URL || '';
 const sqlPool = databaseUrl ? new pg.Pool({ connectionString: databaseUrl }) : null;
 
-let db = { version: 8, hospitals: [], patients: [], therapists: [], jobs: [], rehabRecords: [], rehabVoiceSessions: [], rehabPlans: [] };
+let db = { version: 9, hospitals: [], patients: [], therapists: [], jobs: [], rehabRecords: [], rehabVoiceSessions: [], rehabPlans: [], rehabPlanContexts: [] };
 let writeChain = Promise.resolve();
 
 if (!['127.0.0.1', 'localhost', '::1'].includes(host) && (!authUser || !authPassword || !encryptionKey)) {
@@ -87,7 +87,8 @@ if (!Array.isArray(db.therapists)) db.therapists = [];
 if (!Array.isArray(db.rehabRecords)) db.rehabRecords = [];
 if (!Array.isArray(db.rehabVoiceSessions)) db.rehabVoiceSessions = [];
 if (!Array.isArray(db.rehabPlans)) db.rehabPlans = [];
-db.version = Math.max(Number(db.version) || 0, 7);
+if (!Array.isArray(db.rehabPlanContexts)) db.rehabPlanContexts = [];
+db.version = Math.max(Number(db.version) || 0, 9);
 let seededRehabVoicePatients = 0;
 for (const tenantId of new Set([facilityId, ...db.hospitals.filter(hospital => hospital.active !== false).map(hospital => hospital.id)])) {
   for (const [facilityPatientId, name, birthDate] of [
@@ -216,6 +217,21 @@ function normalizedRehabPlan(body, previous = {}) {
   };
 }
 
+function normalizedRehabPlanContext(body, previous = {}) {
+  const text = (key, max = 6000) => safeText(body[key] ?? previous[key], max);
+  const date = key => /^\d{4}-\d{2}-\d{2}$/.test(String(body[key] || '')) ? body[key] : (previous[key] || '');
+  return {
+    diagnosis: text('diagnosis', 1200), comorbidities: text('comorbidities'), onsetDate: date('onsetDate'), surgeryAndTreatment: text('surgeryAndTreatment'),
+    medicalRestrictions: text('medicalRestrictions'), medicationsAndDevices: text('medicationsAndDevices'),
+    preHospitalLife: text('preHospitalLife'), currentAdl: text('currentAdl'), cognitionCommunication: text('cognitionCommunication'),
+    homeEnvironment: text('homeEnvironment'), familySupport: text('familySupport'), socialRoles: text('socialRoles'),
+    patientGoals: text('patientGoals'), familyGoals: text('familyGoals'), dischargeDestination: text('dischargeDestination'),
+    ptFindings: text('ptFindings'), otFindings: text('otFindings'), stFindings: text('stFindings'), nursingFindings: text('nursingFindings'), socialWorkFindings: text('socialWorkFindings'),
+    risks: text('risks'), unresolvedQuestions: text('unresolvedQuestions'), sourceNotes: text('sourceNotes'),
+    dataStatus: body.dataStatus === 'VERIFIED' ? 'VERIFIED' : 'UNVERIFIED', lastReviewedDate: date('lastReviewedDate'), reviewedBy: text('reviewedBy', 200),
+  };
+}
+
 function rehabPlanSource(patient, tenantId) {
   const jobs = db.jobs.filter(job => job.tenantId === tenantId && job.patientId === patient.id && job.result).sort((a, b) => jobClinicalSortKey(b).localeCompare(jobClinicalSortKey(a)));
   const records = db.rehabRecords.filter(record => record.tenantId === tenantId && record.patientId === patient.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
@@ -232,6 +248,7 @@ function rehabPlanSource(patient, tenantId) {
     records: records.slice(0, 10).map(publicRehabRecord),
     voices: voices.slice(0, 10).map(session => ({ createdAt: session.createdAt, patientLog: safeText(session.patientLog, 3000), concerns: safeText(session.concerns, 3000), consultations: safeText(session.consultations, 3000), summary: safeText(session.summary, 3000) })),
     previousPlans: previousPlans.slice(0, 3).map(plan => normalizedRehabPlan(plan)),
+    planContext: db.rehabPlanContexts.find(context => context.tenantId === tenantId && context.patientId === patient.id) || null,
     trends: patientTrend(jobs),
   };
 }
@@ -1441,6 +1458,27 @@ const server = http.createServer(async (req, res) => {
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
         .map(publicRehabPlan);
       return sendJson(res, 200, plans);
+    }
+    if (req.method === 'GET' && url.pathname === '/api/rehab-plan-context') {
+      const patientId = safeText(url.searchParams.get('patientId'));
+      const patient = db.patients.find(item => item.tenantId === identity.tenantId && item.id === patientId);
+      if (!patient) return sendJson(res, 404, { error: '患者が見つかりません' });
+      const context = db.rehabPlanContexts.find(item => item.tenantId === identity.tenantId && item.patientId === patientId);
+      return sendJson(res, 200, context || { patientId, ...normalizedRehabPlanContext({}), updatedAt: null });
+    }
+    if (req.method === 'PUT' && url.pathname === '/api/rehab-plan-context') {
+      const body = await readJson(req);
+      const patient = db.patients.find(item => item.tenantId === identity.tenantId && item.id === body.patientId);
+      if (!patient) return sendJson(res, 400, { error: '患者を選択してください' });
+      const timestamp = now();
+      let context = db.rehabPlanContexts.find(item => item.tenantId === identity.tenantId && item.patientId === patient.id);
+      if (!context) {
+        context = { id: id('rehab-plan-context'), tenantId: identity.tenantId, patientId: patient.id, createdAt: timestamp };
+        db.rehabPlanContexts.push(context);
+      }
+      Object.assign(context, normalizedRehabPlanContext(body, context), { updatedAt: timestamp, updatedBy: safeText(identity.hospitalName || identity.userId, 200) });
+      await persist();
+      return sendJson(res, 200, context);
     }
     if (req.method === 'GET' && url.pathname === '/api/rehab-plans/source') {
       const patientId = safeText(url.searchParams.get('patientId'));

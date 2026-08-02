@@ -2,6 +2,7 @@
 .plan-eyebrow{color:var(--reha-back)}
 .rehab-plan-toolbar{display:grid;grid-template-columns:minmax(260px,1fr) repeat(3,auto);gap:10px;align-items:end;padding:14px;border-radius:10px;background:var(--reha-panel-bg)}
 .rehab-plan-toolbar label{margin:0}
+.rehab-plan-context{margin:14px 0;border:1px solid #cbbde5;border-radius:10px;background:#fcfaff}.rehab-plan-context>summary{padding:14px;cursor:pointer;color:#4d2b8c;font-weight:800}.rehab-plan-context form{padding:0 14px 14px}.rehab-plan-context fieldset{margin:14px 0;padding:14px;border:1px solid var(--line);border-radius:10px}.rehab-plan-context legend{padding:0 8px;font-weight:700}.context-actions{display:flex;align-items:center;gap:12px}.context-actions span{font-size:13px;color:var(--reha-back)}
 .rehab-plan-evidence{margin:14px 0;padding:14px;border-left:4px solid var(--reha-pt);border-radius:8px;background:#f5f8ff;font-size:13px;line-height:1.65}
 .rehab-plan-evidence ul{margin:6px 0;padding-left:20px}
 .rehab-plan-form fieldset{margin:18px 0;padding:16px;border:1px solid var(--line);border-radius:12px}

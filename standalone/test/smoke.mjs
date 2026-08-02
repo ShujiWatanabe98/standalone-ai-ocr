@@ -368,9 +368,19 @@ assert.equal(voiceSessions[0].hasAudio, true);
 const voiceAudioResponse = await fetch(`${base}/api/rehab-voice/sessions/rehab-voice-smoke-1/audio`, { headers: { Authorization: auth } });
 assert.equal(voiceAudioResponse.status, 200);
 assert.equal(voiceAudioResponse.headers.get('content-type'), 'audio/webm');
+const planContextSaveResponse = await fetch(`${base}/api/rehab-plan-context`, {
+  method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: auth },
+  body: JSON.stringify({ patientId: patient.id, diagnosis: '脳梗塞', preHospitalLife: '屋内歩行自立', patientGoals: '自宅へ戻る', dataStatus: 'VERIFIED', lastReviewedDate: '2026-08-02', reviewedBy: 'Test Therapist' }),
+});
+assert.equal(planContextSaveResponse.status, 200);
+assert.equal((await planContextSaveResponse.json()).dataStatus, 'VERIFIED');
+const planContext = await fetch(`${base}/api/rehab-plan-context?patientId=${patient.id}`, { headers: { Authorization: auth } }).then(r => r.json());
+assert.equal(planContext.diagnosis, '脳梗塞');
 const planSourceResponse = await fetch(`${base}/api/rehab-plans/source?patientId=${patient.id}`, { headers: { Authorization: auth } });
 assert.equal(planSourceResponse.status, 200);
-assert.equal((await planSourceResponse.json()).latestVoice.patientLog, 'テストログ');
+const planSource = await planSourceResponse.json();
+assert.equal(planSource.latestVoice.patientLog, 'テストログ');
+assert.equal(planSource.planContext.patientGoals, '自宅へ戻る');
 const generatePlanResponse = await fetch(`${base}/api/rehab-plans/generate`, {
   method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: auth }, body: JSON.stringify({ patientId: patient.id }),
 });

@@ -17,6 +17,13 @@ const aiPlanButton = planById('rehabPlanLoadSource');
 aiPlanButton.textContent = 'AI計画を作成';
 aiPlanButton.classList.remove('secondary');
 aiPlanButton.classList.add('primary');
+const planToolbar = rehabPlanSection.querySelector('.rehab-plan-toolbar');
+const contextDetails = document.createElement('details');
+contextDetails.className = 'rehab-plan-context';
+contextDetails.innerHTML = `<summary>AI計画用データを入力・確認</summary><form id="rehabPlanContextForm"><div class="plan-grid plan-meta"><label>確認状態<select name="dataStatus"><option value="UNVERIFIED">未確認を含む</option><option value="VERIFIED">療法士確認済み</option></select></label><label>最終確認日<input name="lastReviewedDate" type="date"></label><label>確認者<input name="reviewedBy" placeholder="担当療法士名"></label><label>発症・受傷日<input name="onsetDate" type="date"></label></div><fieldset><legend>医学情報</legend><div class="plan-grid"><label>診断名<textarea name="diagnosis" rows="2"></textarea></label><label>併存疾患<textarea name="comorbidities" rows="2"></textarea></label><label>手術・治療経過<textarea name="surgeryAndTreatment" rows="3"></textarea></label><label>禁忌・医学的制約<textarea name="medicalRestrictions" rows="3"></textarea></label><label>薬剤・装具・医療機器<textarea name="medicationsAndDevices" rows="3"></textarea></label><label>リスク<textarea name="risks" rows="3"></textarea></label></div></fieldset><fieldset><legend>生活・活動・参加</legend><div class="plan-grid"><label>入院前の生活・ADL<textarea name="preHospitalLife" rows="3"></textarea></label><label>現在のADL<textarea name="currentAdl" rows="3"></textarea></label><label>認知・コミュニケーション<textarea name="cognitionCommunication" rows="3"></textarea></label><label>住環境<textarea name="homeEnvironment" rows="3"></textarea></label><label>家族の支援力・介護状況<textarea name="familySupport" rows="3"></textarea></label><label>仕事・家庭・地域での役割<textarea name="socialRoles" rows="3"></textarea></label></div></fieldset><fieldset><legend>希望・退院方針</legend><div class="plan-grid"><label>本人の希望・優先事項<textarea name="patientGoals" rows="3"></textarea></label><label>家族の希望・課題<textarea name="familyGoals" rows="3"></textarea></label><label>想定する退院先<textarea name="dischargeDestination" rows="3"></textarea></label><label>未確認・質問事項<textarea name="unresolvedQuestions" rows="3"></textarea></label></div></fieldset><fieldset><legend>多職種所見</legend><div class="plan-grid"><label>PT所見<textarea name="ptFindings" rows="3"></textarea></label><label>OT所見<textarea name="otFindings" rows="3"></textarea></label><label>ST所見<textarea name="stFindings" rows="3"></textarea></label><label>看護所見<textarea name="nursingFindings" rows="3"></textarea></label><label>退院支援・MSW所見<textarea name="socialWorkFindings" rows="3"></textarea></label><label>情報源・確認方法<textarea name="sourceNotes" rows="3" placeholder="本人聴取、家族聴取、診療録など"></textarea></label></div></fieldset><div class="context-actions"><button id="rehabPlanContextSave" class="secondary" type="submit">AI計画用データを保存</button><span id="rehabPlanContextMessage" role="status"></span></div></form>`;
+planToolbar.after(contextDetails);
+const contextForm = planById('rehabPlanContextForm');
+const contextMessage = planById('rehabPlanContextMessage');
 const planActions = planForm.querySelector('.rehab-plan-actions');
 const reviewFieldset = document.createElement('fieldset');
 reviewFieldset.className = 'plan-review-comments';
@@ -32,6 +39,22 @@ async function planApi(path, options = {}) {
 function localDate() { const date = new Date(); return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 10); }
 function patientLabel(patient) { return `${patient.facilityPatientId}｜${patient.name}`; }
 function selectedPatientFromInput() { const query = planSearch.value.trim(); return planPatients.find(patient => query === patientLabel(patient) || query === patient.facilityPatientId || query === patient.name) || null; }
+async function loadPlanContext() {
+  if (!selectedPlanPatient) { contextForm.reset(); contextMessage.textContent = '患者を選択してください。'; return; }
+  const context = await planApi(`/api/rehab-plan-context?patientId=${encodeURIComponent(selectedPlanPatient.id)}`);
+  contextForm.reset();
+  for (const [key, value] of Object.entries(context)) { const field = contextForm.elements.namedItem(key); if (field && value != null) field.value = value; }
+  contextMessage.textContent = context.updatedAt ? `保存済み（${new Date(context.updatedAt).toLocaleString('ja-JP')}更新）` : '未登録です。分かる範囲から入力してください。';
+}
+async function savePlanContext(event) {
+  event.preventDefault();
+  selectedPlanPatient = selectedPatientFromInput();
+  if (!selectedPlanPatient) throw new Error('登録患者を選択してください。');
+  contextMessage.textContent = '保存中…';
+  const data = { ...Object.fromEntries(new FormData(contextForm).entries()), patientId: selectedPlanPatient.id };
+  const saved = await planApi('/api/rehab-plan-context', { method: 'PUT', body: JSON.stringify(data) });
+  contextMessage.textContent = `保存しました（${new Date(saved.updatedAt).toLocaleString('ja-JP')}）。AI計画作成時に参照されます。`;
+}
 function setPlanField(name, value, { overwrite = false } = {}) { const field = planForm.elements.namedItem(name); if (field && (overwrite || !field.value.trim())) field.value = value || ''; }
 function formObject() { return Object.fromEntries(new FormData(planForm).entries()); }
 function showPlanError(error) {
@@ -116,7 +139,8 @@ async function initializePlans() {
   planById('rehabPlanPatientList').innerHTML = planPatients.map(patient => `<option value="${planEsc(patientLabel(patient))}"></option>`).join('');
   resetPlanForm();
 }
-planSearch.addEventListener('change', async () => { selectedPlanPatient = selectedPatientFromInput(); resetPlanForm(); try { await refreshPlanHistory(); } catch (error) { planMessage.textContent = error.message; } });
+planSearch.addEventListener('change', async () => { selectedPlanPatient = selectedPatientFromInput(); resetPlanForm(); try { await Promise.all([refreshPlanHistory(), loadPlanContext()]); } catch (error) { planMessage.textContent = error.message; } });
+contextForm.addEventListener('submit', event => savePlanContext(event).catch(error => { contextMessage.textContent = error.message; }));
 planById('rehabPlanLoadSource').addEventListener('click', () => loadPlanSource({ overwrite: false }).catch(showPlanError));
 planById('rehabPlanCopyPrevious').addEventListener('click', async () => { try { selectedPlanPatient = selectedPatientFromInput(); await refreshPlanHistory(); if (!patientPlans.length) throw new Error('コピーできる前回計画がありません。'); const previous = patientPlans[0]; resetPlanForm(); populatePlan({ ...previous, id: '', version: Number(previous.version) + 1, status: 'DRAFT', planType: 'REASSESSMENT', evaluationDate: localDate(), updatedAt: new Date().toISOString() }); planForm.elements.id.value = ''; planStatus.textContent = '前回コピー・未保存'; } catch (error) { planMessage.textContent = error.message; } });
 planById('rehabPlanNew').addEventListener('click', resetPlanForm);
