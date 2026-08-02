@@ -1,0 +1,19 @@
+.rehab-plan-panel{border-top:5px solid var(--reha-main)}
+.plan-eyebrow{color:var(--reha-back)}
+.rehab-plan-toolbar{display:grid;grid-template-columns:minmax(260px,1fr) repeat(3,auto);gap:10px;align-items:end;padding:14px;border-radius:10px;background:var(--reha-panel-bg)}
+.rehab-plan-toolbar label{margin:0}
+.rehab-plan-evidence{margin:14px 0;padding:14px;border-left:4px solid var(--reha-pt);border-radius:8px;background:#f5f8ff;font-size:13px;line-height:1.65}
+.rehab-plan-evidence ul{margin:6px 0;padding-left:20px}
+.rehab-plan-form fieldset{margin:18px 0;padding:16px;border:1px solid var(--line);border-radius:12px}
+.rehab-plan-form legend{padding:0 8px;color:var(--reha-main);font-weight:800}
+.plan-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 16px}
+.plan-grid.plan-meta{grid-template-columns:repeat(4,minmax(0,1fr))}
+.plan-grid.plan-team{grid-template-columns:repeat(3,minmax(0,1fr))}
+.rehab-plan-form textarea{resize:vertical;line-height:1.55}
+.rehab-plan-form textarea[readonly]{background:#f1f3f5;color:#485371}
+.rehab-plan-actions{display:flex;justify-content:flex-end;gap:10px;position:sticky;bottom:8px;padding:12px;background:#fffffff2;border:1px solid var(--line);border-radius:10px;z-index:4}
+.rehab-plan-history{margin-top:24px;padding-top:18px;border-top:1px solid var(--line)}
+.rehab-plan-history .card strong{display:block}.rehab-plan-history .card small{display:block;color:var(--reha-back);margin-top:4px}
+.plan-status-confirmed{background:#d9f4e7;color:#17633d}.plan-status-draft{background:#fff1c9;color:#755800}
+@media(max-width:760px){.rehab-plan-toolbar{grid-template-columns:1fr 1fr}.rehab-plan-toolbar label{grid-column:1/-1}.plan-grid,.plan-grid.plan-meta,.plan-grid.plan-team{grid-template-columns:1fr}.rehab-plan-actions{display:grid;grid-template-columns:1fr 1fr}.rehab-plan-actions button:last-of-type{grid-column:1/-1}}
+@media print{body>*{display:none!important}main{display:block!important;max-width:none;padding:0}#view-rehab-plan{display:block!important;margin:0}.rehab-plan-panel{display:block!important;border:0;box-shadow:none;padding:0}.rehab-plan-toolbar,.rehab-plan-evidence,.rehab-plan-actions,.rehab-plan-history,#rehabPlanMessage{display:none!important}.rehab-plan-form fieldset{break-inside:avoid;margin:8px 0;padding:8px}.rehab-plan-form textarea,.rehab-plan-form input,.rehab-plan-form select{border:0;padding:2px;min-height:auto;appearance:none}.plan-grid{gap:0 10px}}

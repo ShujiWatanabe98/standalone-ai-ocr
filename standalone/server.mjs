@@ -46,7 +46,7 @@ const allowedImageTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const databaseUrl = process.env.DATABASE_URL || '';
 const sqlPool = databaseUrl ? new pg.Pool({ connectionString: databaseUrl }) : null;
 
-let db = { version: 7, hospitals: [], patients: [], therapists: [], jobs: [], rehabRecords: [], rehabVoiceSessions: [] };
+let db = { version: 8, hospitals: [], patients: [], therapists: [], jobs: [], rehabRecords: [], rehabVoiceSessions: [], rehabPlans: [] };
 let writeChain = Promise.resolve();
 
 if (!['127.0.0.1', 'localhost', '::1'].includes(host) && (!authUser || !authPassword || !encryptionKey)) {
@@ -86,6 +86,7 @@ if (!Array.isArray(db.hospitals)) db.hospitals = [];
 if (!Array.isArray(db.therapists)) db.therapists = [];
 if (!Array.isArray(db.rehabRecords)) db.rehabRecords = [];
 if (!Array.isArray(db.rehabVoiceSessions)) db.rehabVoiceSessions = [];
+if (!Array.isArray(db.rehabPlans)) db.rehabPlans = [];
 db.version = Math.max(Number(db.version) || 0, 7);
 let seededRehabVoicePatients = 0;
 for (const tenantId of new Set([facilityId, ...db.hospitals.filter(hospital => hospital.active !== false).map(hospital => hospital.id)])) {
@@ -191,6 +192,27 @@ function publicPatient(patient, tenantId) {
 }
 function publicRehabRecord(record) {
   return { ...record };
+}
+function publicRehabPlan(plan) {
+  return { ...plan };
+}
+function normalizedRehabPlan(body, previous = {}) {
+  const text = (key, max = 6000) => safeText(body[key] ?? previous[key], max);
+  return {
+    planType: ['INITIAL', 'REASSESSMENT', 'DISCHARGE'].includes(body.planType) ? body.planType : (previous.planType || 'INITIAL'),
+    evaluationDate: /^\d{4}-\d{2}-\d{2}$/.test(String(body.evaluationDate || '')) ? body.evaluationDate : (previous.evaluationDate || ''),
+    targetDate: /^\d{4}-\d{2}-\d{2}$/.test(String(body.targetDate || '')) ? body.targetDate : (previous.targetDate || ''),
+    diagnosis: text('diagnosis', 1000), onsetAndCourse: text('onsetAndCourse'), precautions: text('precautions'),
+    bodyFunction: text('bodyFunction'), activity: text('activity'), participation: text('participation'),
+    patientWishes: text('patientWishes'), familyWishes: text('familyWishes'),
+    shortTermGoals: text('shortTermGoals'), longTermGoals: text('longTermGoals'), dischargeGoal: text('dischargeGoal'),
+    ptApproach: text('ptApproach'), otApproach: text('otApproach'), stApproach: text('stApproach'),
+    nursingApproach: text('nursingApproach'), socialApproach: text('socialApproach'),
+    nutritionAndOral: text('nutritionAndOral'), riskManagement: text('riskManagement'),
+    explanation: text('explanation'), evidence: text('evidence', 12000),
+    doctorName: text('doctorName', 200), nurseName: text('nurseName', 200),
+    ptName: text('ptName', 200), otName: text('otName', 200), stName: text('stName', 200), socialWorkerName: text('socialWorkerName', 200),
+  };
 }
 function numericFieldMap(job) {
   const result = job.confirmedResult || job.result;
@@ -1360,6 +1382,75 @@ const server = http.createServer(async (req, res) => {
       const index = db.therapists.findIndex(therapist => therapist.tenantId === identity.tenantId && therapist.id === therapistMatch[1]);
       if (index < 0) return sendJson(res, 404, { error: '療法士が見つかりません。' });
       const [deleted] = db.therapists.splice(index, 1);
+      await persist();
+      return sendJson(res, 200, { deletedId: deleted.id });
+    }
+    if (req.method === 'GET' && url.pathname === '/api/rehab-plans') {
+      const patientId = safeText(url.searchParams.get('patientId'));
+      const plans = db.rehabPlans
+        .filter(plan => plan.tenantId === identity.tenantId && (!patientId || plan.patientId === patientId))
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+        .map(publicRehabPlan);
+      return sendJson(res, 200, plans);
+    }
+    if (req.method === 'GET' && url.pathname === '/api/rehab-plans/source') {
+      const patientId = safeText(url.searchParams.get('patientId'));
+      const patient = db.patients.find(item => item.tenantId === identity.tenantId && item.id === patientId);
+      if (!patient) return sendJson(res, 404, { error: '患者が見つかりません' });
+      const jobs = db.jobs.filter(job => job.tenantId === identity.tenantId && job.patientId === patientId && job.result).sort((a, b) => jobClinicalSortKey(b).localeCompare(jobClinicalSortKey(a)));
+      const latestEvaluation = jobs[0] || null;
+      const result = latestEvaluation ? (latestEvaluation.confirmedResult || latestEvaluation.result) : null;
+      const latestRecord = db.rehabRecords.filter(record => record.tenantId === identity.tenantId && record.patientId === patientId).sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0] || null;
+      const latestVoice = db.rehabVoiceSessions.filter(session => session.tenantId === identity.tenantId && session.patientId === patientId).sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0] || null;
+      return sendJson(res, 200, {
+        patient: publicPatient(patient, identity.tenantId),
+        latestRecord: latestRecord ? publicRehabRecord(latestRecord) : null,
+        latestVoice: latestVoice ? { ...latestVoice, hasAudio: Boolean(latestVoice.hasAudio) } : null,
+        latestEvaluation: latestEvaluation ? { id: latestEvaluation.id, documentType: result?.documentType || latestEvaluation.evaluationType || '', evaluationDate: jobEvaluationDate(latestEvaluation), notes: result?.notes || '', fields: (result?.fields || []).slice(0, 120).map(field => ({ label: safeText(field.label, 300), value: safeText(field.value, 1000) })) } : null,
+        trends: patientTrend(jobs),
+      });
+    }
+    if (req.method === 'POST' && url.pathname === '/api/rehab-plans') {
+      const body = await readJson(req);
+      const patient = db.patients.find(item => item.tenantId === identity.tenantId && item.id === body.patientId);
+      if (!patient) return sendJson(res, 400, { error: '患者を選択してください' });
+      const timestamp = now();
+      const existingPlans = db.rehabPlans.filter(plan => plan.tenantId === identity.tenantId && plan.patientId === patient.id);
+      const plan = {
+        id: id('rehab-plan'), tenantId: identity.tenantId, patientId: patient.id,
+        patientLabel: `${patient.facilityPatientId}｜${patient.name}`,
+        version: Math.max(0, ...existingPlans.map(item => Number(item.version) || 0)) + 1,
+        status: body.status === 'CONFIRMED' ? 'CONFIRMED' : 'DRAFT',
+        ...normalizedRehabPlan(body),
+        createdBy: safeText(body.createdBy || identity.hospitalName || identity.userId, 200),
+        confirmedBy: body.status === 'CONFIRMED' ? safeText(body.createdBy || identity.hospitalName || identity.userId, 200) : '',
+        confirmedAt: body.status === 'CONFIRMED' ? timestamp : null,
+        createdAt: timestamp, updatedAt: timestamp, revisions: [],
+      };
+      db.rehabPlans.push(plan);
+      await persist();
+      return sendJson(res, 201, publicRehabPlan(plan));
+    }
+    const rehabPlanMatch = /^\/api\/rehab-plans\/([^/]+)$/.exec(url.pathname);
+    if (req.method === 'PUT' && rehabPlanMatch) {
+      const plan = db.rehabPlans.find(item => item.tenantId === identity.tenantId && item.id === rehabPlanMatch[1]);
+      if (!plan) return sendJson(res, 404, { error: 'リハビリ計画書が見つかりません' });
+      const body = await readJson(req);
+      const timestamp = now();
+      plan.revisions = Array.isArray(plan.revisions) ? plan.revisions : [];
+      plan.revisions.push({ at: timestamp, by: safeText(body.updatedBy || identity.hospitalName || identity.userId, 200), status: plan.status, data: normalizedRehabPlan(plan) });
+      Object.assign(plan, normalizedRehabPlan(body, plan));
+      plan.status = body.status === 'CONFIRMED' ? 'CONFIRMED' : 'DRAFT';
+      plan.confirmedBy = plan.status === 'CONFIRMED' ? safeText(body.updatedBy || identity.hospitalName || identity.userId, 200) : '';
+      plan.confirmedAt = plan.status === 'CONFIRMED' ? timestamp : null;
+      plan.updatedAt = timestamp;
+      await persist();
+      return sendJson(res, 200, publicRehabPlan(plan));
+    }
+    if (req.method === 'DELETE' && rehabPlanMatch) {
+      const index = db.rehabPlans.findIndex(item => item.tenantId === identity.tenantId && item.id === rehabPlanMatch[1]);
+      if (index < 0) return sendJson(res, 404, { error: 'リハビリ計画書が見つかりません' });
+      const [deleted] = db.rehabPlans.splice(index, 1);
       await persist();
       return sendJson(res, 200, { deletedId: deleted.id });
     }

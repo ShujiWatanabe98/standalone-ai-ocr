@@ -368,6 +368,27 @@ assert.equal(voiceSessions[0].hasAudio, true);
 const voiceAudioResponse = await fetch(`${base}/api/rehab-voice/sessions/rehab-voice-smoke-1/audio`, { headers: { Authorization: auth } });
 assert.equal(voiceAudioResponse.status, 200);
 assert.equal(voiceAudioResponse.headers.get('content-type'), 'audio/webm');
+const planSourceResponse = await fetch(`${base}/api/rehab-plans/source?patientId=${patient.id}`, { headers: { Authorization: auth } });
+assert.equal(planSourceResponse.status, 200);
+assert.equal((await planSourceResponse.json()).latestVoice.patientLog, 'テストログ');
+const createPlanResponse = await fetch(`${base}/api/rehab-plans`, {
+  method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: auth },
+  body: JSON.stringify({ patientId: patient.id, planType: 'INITIAL', evaluationDate: '2026-08-02', diagnosis: 'Smoke diagnosis', patientWishes: 'Walk home', shortTermGoals: 'Stand safely', status: 'DRAFT' }),
+});
+assert.equal(createPlanResponse.status, 201);
+const rehabPlan = await createPlanResponse.json();
+assert.equal(rehabPlan.version, 1);
+assert.equal(rehabPlan.status, 'DRAFT');
+const updatePlanResponse = await fetch(`${base}/api/rehab-plans/${rehabPlan.id}`, {
+  method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: auth },
+  body: JSON.stringify({ ...rehabPlan, longTermGoals: 'Return home', status: 'CONFIRMED' }),
+});
+assert.equal(updatePlanResponse.status, 200);
+const confirmedPlan = await updatePlanResponse.json();
+assert.equal(confirmedPlan.status, 'CONFIRMED');
+assert.equal(confirmedPlan.revisions.length, 1);
+const rehabPlans = await fetch(`${base}/api/rehab-plans?patientId=${patient.id}`, { headers: { Authorization: auth } }).then(r => r.json());
+assert.equal(rehabPlans.length, 1);
 const tinyPng = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
 const jobResponse = await fetch(`${base}/api/jobs`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: auth }, body: JSON.stringify({ patientId: patient.id, imageDataUrl: tinyPng }) });
 assert.equal(jobResponse.status, 202);
