@@ -46,7 +46,7 @@ const allowedImageTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const databaseUrl = process.env.DATABASE_URL || '';
 const sqlPool = databaseUrl ? new pg.Pool({ connectionString: databaseUrl }) : null;
 
-let db = { version: 18, hospitals: [], patients: [], therapists: [], jobs: [], rehabRecords: [], rehabVoiceSessions: [], rehabPlans: [], rehabPlanContexts: [], outcomeGoals: [], outcomeSnapshots: [], outcomeActions: [], fimAssessments: [], recoveryWardProfiles: [], dischargeTasks: [], conferences: [], warningReviews: [], integrationRuns: [], clinicalEvents: [] };
+let db = { version: 19, hospitals: [], patients: [], therapists: [], jobs: [], rehabRecords: [], rehabVoiceSessions: [], rehabPlans: [], rehabPlanContexts: [], outcomeGoals: [], outcomeSnapshots: [], outcomeActions: [], fimAssessments: [], recoveryWardProfiles: [], dischargeTasks: [], conferences: [], warningReviews: [], integrationRuns: [], clinicalEvents: [], pilotTimeMeasurements: [] };
 let writeChain = Promise.resolve();
 
 if (!['127.0.0.1', 'localhost', '::1'].includes(host) && (!authUser || !authPassword || !encryptionKey)) {
@@ -98,7 +98,8 @@ if (!Array.isArray(db.conferences)) db.conferences = [];
 if (!Array.isArray(db.warningReviews)) db.warningReviews = [];
 if (!Array.isArray(db.integrationRuns)) db.integrationRuns = [];
 if (!Array.isArray(db.clinicalEvents)) db.clinicalEvents = [];
-db.version = Math.max(Number(db.version) || 0, 18);
+if (!Array.isArray(db.pilotTimeMeasurements)) db.pilotTimeMeasurements = [];
+db.version = Math.max(Number(db.version) || 0, 19);
 const outcomeGoalTemplates = [
   { key: 'homeReturnRate', label: '在宅復帰率', unit: '%', publicBaseline: 83, proposedTarget: 85, direction: 'UP', sourceLabel: '西大和リハビリテーション病院 公開実績', sourceUrl: 'https://www.nishiyamato.net/reason/' },
   { key: 'fimGain', label: 'FIM改善', unit: '点', publicBaseline: 27.6, proposedTarget: 30, direction: 'UP', sourceLabel: '西大和リハビリテーション病院 公開実績', sourceUrl: 'https://www.nishiyamato.net/reason/' },
@@ -1654,6 +1655,31 @@ const server = http.createServer(async (req, res) => {
       const body=await readJson(req);const rows=Array.isArray(body.rows)?body.rows.slice(0,5000):[];const dryRun=body.apply!==true;const seen=new Set();const results=rows.map((raw,index)=>{const externalEventId=safeText(raw.externalEventId,120),facilityPatientId=safeText(raw.facilityPatientId,100),eventType=String(raw.eventType||'').toUpperCase();if(!externalEventId||!facilityPatientId)return{row:index+2,status:'ERROR',facilityPatientId,message:'外部イベントIDと患者IDは必須です'};if(seen.has(externalEventId))return{row:index+2,status:'ERROR',facilityPatientId,message:'CSV内で外部イベントIDが重複しています'};seen.add(externalEventId);const patient=db.patients.find(item=>item.tenantId===identity.tenantId&&item.facilityPatientId===facilityPatientId);if(!patient)return{row:index+2,status:'ERROR',facilityPatientId,message:'登録患者が見つかりません'};if(db.clinicalEvents.some(item=>item.tenantId===identity.tenantId&&item.externalEventId===externalEventId))return{row:index+2,status:'UNCHANGED',facilityPatientId,message:'外部イベントIDは取込済み'};if(!['PRESCRIPTION','LAB'].includes(eventType))return{row:index+2,status:'ERROR',facilityPatientId,message:'種別はPRESCRIPTIONまたはLABです'};const occurredAt=String(raw.occurredAt||''),title=safeText(raw.title,500);if(!/^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2})?)?$/.test(occurredAt))return{row:index+2,status:'ERROR',facilityPatientId,message:'発生日時の形式が不正です'};if(!title)return{row:index+2,status:'ERROR',facilityPatientId,message:'項目名は必須です'};return{row:index+2,status:'CREATE',facilityPatientId,patientId:patient.id,data:{externalEventId,eventType,occurredAt,title,value:safeText(raw.value,500),unit:safeText(raw.unit,100),note:safeText(raw.note,2000)},message:'新規臨床イベント候補'};});const counts=Object.fromEntries(['CREATE','UNCHANGED','CONFLICT','ERROR'].map(status=>[status,results.filter(item=>item.status===status).length]));let created=0;if(!dryRun&&!counts.ERROR){const timestamp=now();for(const item of results.filter(result=>result.status==='CREATE')){db.clinicalEvents.push({id:id('clinical-event'),tenantId:identity.tenantId,patientId:item.patientId,...item.data,importSource:'CLINICAL_EVENT_CSV',createdAt:timestamp,createdBy:safeText(identity.hospitalName||identity.userId,200)});created++;}}const run={id:id('integration-run'),tenantId:identity.tenantId,type:'CLINICAL_EVENT_CSV',mode:dryRun?'PREVIEW':'APPLY',status:!dryRun&&counts.ERROR?'BLOCKED':'COMPLETED',counts,created,issues:results.filter(item=>item.status==='ERROR').slice(0,200),createdAt:now(),createdBy:safeText(identity.hospitalName||identity.userId,200)};db.integrationRuns.push(run);await persist();return sendJson(res,run.status==='BLOCKED'?409:200,{...run,results,usageNote:'処方・検査は参照情報です。診断や治療判断には原システムと医療者確認が必要です。'});
     }
     if (req.method === 'GET' && url.pathname === '/api/clinical-events') {const patientId=safeText(url.searchParams.get('patientId'));return sendJson(res,200,db.clinicalEvents.filter(item=>item.tenantId===identity.tenantId&&(!patientId||item.patientId===patientId)).sort((a,b)=>String(b.occurredAt).localeCompare(String(a.occurredAt))).slice(0,500));}
+    if (req.method === 'GET' && url.pathname === '/api/pilot/time-summary') {
+      const rows = db.pilotTimeMeasurements.filter(item => item.tenantId === identity.tenantId).sort((a,b) => String(b.measuredAt).localeCompare(String(a.measuredAt)));
+      const workflowLabels = { RECORD: '記録入力', PLAN: 'リハビリ計画書', CONFERENCE: 'カンファレンス資料', DISCHARGE: '退院支援', OTHER: 'その他' };
+      const workflows = Object.keys(workflowLabels).map(workflow => {
+        const selected = rows.filter(item => item.workflow === workflow);
+        const baseline = selected.filter(item => item.phase === 'BASELINE');
+        const trial = selected.filter(item => item.phase === 'TRIAL');
+        const average = list => list.length ? Math.round(list.reduce((sum,item) => sum + item.minutesPerCase, 0) / list.length * 10) / 10 : null;
+        const baselineAverage = average(baseline), trialAverage = average(trial);
+        const reductionRate = baselineAverage && trialAverage != null ? Math.round((baselineAverage - trialAverage) / baselineAverage * 1000) / 10 : null;
+        return { workflow, label: workflowLabels[workflow], baselineCount: baseline.length, trialCount: trial.length, baselineAverage, trialAverage, reductionRate, target: 30, status: reductionRate == null ? 'MEASUREMENT_REQUIRED' : reductionRate >= 30 ? 'TARGET_MET' : 'BELOW_TARGET' };
+      });
+      const comparable = workflows.filter(item => item.reductionRate != null);
+      return sendJson(res, 200, { measurements: rows.slice(0,100), workflows, target: 30, comparableWorkflows: comparable.length, targetMetWorkflows: comparable.filter(item => item.status === 'TARGET_MET').length, note: '同一業務の導入前と試行中を複数回測定して比較します。患者の状態や担当者などの条件差を確認したうえで導入判断に使用してください。' });
+    }
+    if (req.method === 'POST' && url.pathname === '/api/pilot/time-measurements') {
+      const body = await readJson(req); const phase = String(body.phase || '').toUpperCase(); const workflow = String(body.workflow || '').toUpperCase(); const measuredAt = String(body.measuredAt || ''); const minutes = Number(body.minutes); const cases = body.cases === '' || body.cases == null ? 1 : Number(body.cases);
+      if (!['BASELINE','TRIAL'].includes(phase)) return sendJson(res,400,{error:'測定区分は導入前または試行中を選択してください'});
+      if (!['RECORD','PLAN','CONFERENCE','DISCHARGE','OTHER'].includes(workflow)) return sendJson(res,400,{error:'対象業務を選択してください'});
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(measuredAt)) return sendJson(res,400,{error:'測定日を入力してください'});
+      if (!Number.isFinite(minutes)||minutes<=0||minutes>1440) return sendJson(res,400,{error:'所要時間は1～1440分で入力してください'});
+      if (!Number.isInteger(cases)||cases<1||cases>1000) return sendJson(res,400,{error:'対象件数は1～1000件で入力してください'});
+      const item={id:id('pilot-time'),tenantId:identity.tenantId,phase,workflow,measuredAt,minutes:Math.round(minutes*10)/10,cases,minutesPerCase:Math.round(minutes/cases*10)/10,staffRole:safeText(body.staffRole,100),note:safeText(body.note,1000),createdAt:now(),createdBy:safeText(identity.hospitalName||identity.userId,200)};
+      db.pilotTimeMeasurements.push(item); await persist(); return sendJson(res,201,item);
+    }
     if (req.method === 'GET' && url.pathname === '/api/therapists') {
       return sendJson(res, 200, db.therapists
         .filter(therapist => therapist.tenantId === identity.tenantId)

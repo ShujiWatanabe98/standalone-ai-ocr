@@ -645,6 +645,22 @@ assert.equal(integrationCoverage.patientCount, 5);
 assert.equal(integrationCoverage.quality.duplicatesPrevented >= 2, true);
 assert.equal(integrationCoverage.quality.errorsDetected >= 2, true);
 assert.match(integrationCoverage.note, /実証導入前後の時間測定/);
+for (const measurement of [
+  { phase: 'BASELINE', workflow: 'PLAN', measuredAt: '2026-08-01', minutes: 120, cases: 4, staffRole: 'PT' },
+  { phase: 'TRIAL', workflow: 'PLAN', measuredAt: '2026-08-08', minutes: 60, cases: 4, staffRole: 'PT' },
+]) {
+  const response = await fetch(`${base}/api/pilot/time-measurements`, { method: 'POST', headers: { Authorization: auth, 'Content-Type': 'application/json' }, body: JSON.stringify(measurement) });
+  assert.equal(response.status, 201);
+}
+const pilotTimeSummaryResponse = await fetch(`${base}/api/pilot/time-summary`, { headers: { Authorization: auth } });
+assert.equal(pilotTimeSummaryResponse.status, 200);
+const pilotTimeSummary = await pilotTimeSummaryResponse.json();
+const planTimeSummary = pilotTimeSummary.workflows.find(item => item.workflow === 'PLAN');
+assert.equal(planTimeSummary.baselineAverage, 30);
+assert.equal(planTimeSummary.trialAverage, 15);
+assert.equal(planTimeSummary.reductionRate, 50);
+assert.equal(planTimeSummary.status, 'TARGET_MET');
+assert.match(pilotTimeSummary.note, /条件差/);
 const removedAuditEndpoint = await fetch(`${base}/api/audit`, { headers: { Authorization: auth } });
 assert.equal(removedAuditEndpoint.status, 404);
 const databaseBytes = await readFile(path.join(temp, 'database.json'));
