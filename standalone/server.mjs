@@ -1,5 +1,5 @@
 import http from 'node:http';
-import { readFile, writeFile, mkdir, rename, cp, rm, unlink } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, rename, cp, rm, unlink, readdir } from 'node:fs/promises';
 import { existsSync, createReadStream } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -2263,6 +2263,9 @@ const server = http.createServer(async (req, res) => {
       if (identity.role !== 'ADMIN') return sendJson(res, 403, { error: '管理者権限が必要です' });
       const destination = await createBackup(); await persist();
       return sendJson(res, 201, { ok: true, backup: path.basename(destination) });
+    }
+    if (req.method === 'GET' && url.pathname === '/api/admin/backup-status') {
+      if (identity.role !== 'ADMIN') return sendJson(res, 403, { error: '管理者権限が必要です' }); const names=(await readdir(backupDir,{withFileTypes:true})).filter(item=>item.isDirectory()&&item.name.startsWith('backup-')).map(item=>item.name).sort().reverse();const backups=[];for(const name of names.slice(0,10)){try{const manifest=JSON.parse(await readFile(path.join(backupDir,name,'manifest.json'),'utf8'));backups.push({name,createdAt:manifest.createdAt,encrypted:manifest.encrypted===true,facilityId:manifest.facilityId});}catch{backups.push({name,createdAt:null,encrypted:null,invalidManifest:true});}}return sendJson(res,200,{backupDirectoryConfigured:Boolean(backupDir),count:names.length,latest:backups[0]||null,backups,restorePolicy:'復元はサービス停止、対象バックアップ確認、現行データ退避後に管理者が実施します。画面からの自動復元は行いません。'});
     }
     if (req.method === 'GET' && await serveStatic(url.pathname, res)) return;
     sendJson(res, 404, { error: 'Not found' });
