@@ -673,6 +673,20 @@ assert.equal(safetyResolveResponse.status, 200);
 safetySummary = await fetch(`${base}/api/pilot/safety-summary`, { headers: { Authorization: auth } }).then(response => response.json());
 assert.equal(safetySummary.counts.open, 0);
 assert.match(safetySummary.note, /試行を停止/);
+for (const staffRole of ['PT','OT','看護']) {
+  const feedbackResponse = await fetch(`${base}/api/pilot/staff-feedback`, { method: 'POST', headers: { Authorization: auth, 'Content-Type': 'application/json' }, body: JSON.stringify({ staffRole, continueUse: 'YES', usability: 4, usefulness: 5, burden: 2, comment: '患者一覧の絞り込みを改善してほしい' }) });
+  assert.equal(feedbackResponse.status, 201);
+}
+const feedbackSummaryResponse = await fetch(`${base}/api/pilot/staff-feedback-summary`, { headers: { Authorization: auth } });
+assert.equal(feedbackSummaryResponse.status, 200);
+const feedbackSummary = await feedbackSummaryResponse.json();
+assert.equal(feedbackSummary.responses, 3);
+assert.equal(feedbackSummary.agreementRate, 100);
+assert.equal(feedbackSummary.averages.usability, 4);
+assert.equal(feedbackSummary.averages.usefulness, 5);
+assert.equal(feedbackSummary.averages.burden, 2);
+assert.equal(feedbackSummary.gate.status, 'MET');
+assert.equal(feedbackSummary.roles.length, 3);
 const removedAuditEndpoint = await fetch(`${base}/api/audit`, { headers: { Authorization: auth } });
 assert.equal(removedAuditEndpoint.status, 404);
 const databaseBytes = await readFile(path.join(temp, 'database.json'));

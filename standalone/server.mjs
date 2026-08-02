@@ -46,7 +46,7 @@ const allowedImageTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const databaseUrl = process.env.DATABASE_URL || '';
 const sqlPool = databaseUrl ? new pg.Pool({ connectionString: databaseUrl }) : null;
 
-let db = { version: 20, hospitals: [], patients: [], therapists: [], jobs: [], rehabRecords: [], rehabVoiceSessions: [], rehabPlans: [], rehabPlanContexts: [], outcomeGoals: [], outcomeSnapshots: [], outcomeActions: [], fimAssessments: [], recoveryWardProfiles: [], dischargeTasks: [], conferences: [], warningReviews: [], integrationRuns: [], clinicalEvents: [], pilotTimeMeasurements: [], pilotSafetyEvents: [] };
+let db = { version: 21, hospitals: [], patients: [], therapists: [], jobs: [], rehabRecords: [], rehabVoiceSessions: [], rehabPlans: [], rehabPlanContexts: [], outcomeGoals: [], outcomeSnapshots: [], outcomeActions: [], fimAssessments: [], recoveryWardProfiles: [], dischargeTasks: [], conferences: [], warningReviews: [], integrationRuns: [], clinicalEvents: [], pilotTimeMeasurements: [], pilotSafetyEvents: [], pilotStaffFeedback: [] };
 let writeChain = Promise.resolve();
 
 if (!['127.0.0.1', 'localhost', '::1'].includes(host) && (!authUser || !authPassword || !encryptionKey)) {
@@ -100,7 +100,8 @@ if (!Array.isArray(db.integrationRuns)) db.integrationRuns = [];
 if (!Array.isArray(db.clinicalEvents)) db.clinicalEvents = [];
 if (!Array.isArray(db.pilotTimeMeasurements)) db.pilotTimeMeasurements = [];
 if (!Array.isArray(db.pilotSafetyEvents)) db.pilotSafetyEvents = [];
-db.version = Math.max(Number(db.version) || 0, 20);
+if (!Array.isArray(db.pilotStaffFeedback)) db.pilotStaffFeedback = [];
+db.version = Math.max(Number(db.version) || 0, 21);
 const outcomeGoalTemplates = [
   { key: 'homeReturnRate', label: '在宅復帰率', unit: '%', publicBaseline: 83, proposedTarget: 85, direction: 'UP', sourceLabel: '西大和リハビリテーション病院 公開実績', sourceUrl: 'https://www.nishiyamato.net/reason/' },
   { key: 'fimGain', label: 'FIM改善', unit: '点', publicBaseline: 27.6, proposedTarget: 30, direction: 'UP', sourceLabel: '西大和リハビリテーション病院 公開実績', sourceUrl: 'https://www.nishiyamato.net/reason/' },
@@ -1697,6 +1698,15 @@ const server = http.createServer(async (req, res) => {
     }
     const pilotSafetyMatch=/^\/api\/pilot\/safety-events\/([^/]+)$/.exec(url.pathname);
     if(req.method==='PUT'&&pilotSafetyMatch){const item=db.pilotSafetyEvents.find(entry=>entry.tenantId===identity.tenantId&&entry.id===pilotSafetyMatch[1]);if(!item)return sendJson(res,404,{error:'安全事象が見つかりません'});const body=await readJson(req);if(body.status!=='RESOLVED')return sendJson(res,400,{error:'解決済みへの変更だけ実行できます'});const resolution=safeText(body.resolution,2000);if(!resolution)return sendJson(res,400,{error:'原因と再発防止策を入力してください'});item.status='RESOLVED';item.resolution=resolution;item.resolvedAt=now();item.resolvedBy=safeText(identity.hospitalName||identity.userId,200);await persist();return sendJson(res,200,item);}
+    if(req.method==='GET'&&url.pathname==='/api/pilot/staff-feedback-summary'){
+      const rows=db.pilotStaffFeedback.filter(item=>item.tenantId===identity.tenantId).sort((a,b)=>String(b.submittedAt).localeCompare(String(a.submittedAt)));const average=key=>rows.length?Math.round(rows.reduce((sum,item)=>sum+item[key],0)/rows.length*10)/10:null;const agree=rows.filter(item=>item.continueUse==='YES').length;const agreementRate=rows.length?Math.round(agree/rows.length*1000)/10:0;
+      return sendJson(res,200,{responses:rows.length,agreementCount:agree,agreementRate,averages:{usability:average('usability'),usefulness:average('usefulness'),burden:average('burden')},roles:[...new Set(rows.map(item=>item.staffRole).filter(Boolean))],feedback:rows.slice(0,50),gate:{label:'利用継続合意80％以上',target:80,status:rows.length<3?'MORE_RESPONSES_REQUIRED':agreementRate>=80?'MET':'NOT_MET'},note:'少なくとも3人以上から回答を集め、職種の偏りと自由記載を責任者が確認して本導入を判断してください。'});
+    }
+    if(req.method==='POST'&&url.pathname==='/api/pilot/staff-feedback'){
+      const body=await readJson(req);const continueUse=String(body.continueUse||'').toUpperCase();const score=key=>Number(body[key]);
+      if(!['YES','NO','UNSURE'].includes(continueUse))return sendJson(res,400,{error:'利用継続意向を選択してください'});for(const key of ['usability','usefulness','burden'])if(!Number.isInteger(score(key))||score(key)<1||score(key)>5)return sendJson(res,400,{error:'各評価は1～5で入力してください'});
+      const item={id:id('pilot-feedback'),tenantId:identity.tenantId,staffRole:safeText(body.staffRole,100),continueUse,usability:score('usability'),usefulness:score('usefulness'),burden:score('burden'),comment:safeText(body.comment,2000),submittedAt:now(),createdBy:safeText(identity.hospitalName||identity.userId,200)};db.pilotStaffFeedback.push(item);await persist();return sendJson(res,201,item);
+    }
     if (req.method === 'GET' && url.pathname === '/api/therapists') {
       return sendJson(res, 200, db.therapists
         .filter(therapist => therapist.tenantId === identity.tenantId)
