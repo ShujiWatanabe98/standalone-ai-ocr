@@ -30,7 +30,7 @@ assert.equal(health.reasoningEffort, 'low');
 assert.equal(health.retryReasoningEffort, 'high');
 assert.deepEqual(health.rehabAiPlanTestData.facilityPatientIds, ['RAP001', 'RAP002', 'RAP003']);
 assert.equal(health.rehabAiPlanTestData.tenantsReady, 1);
-assert.equal(health.outcomeDemoData.patientsPerTenant, 12);
+assert.equal(health.outcomeDemoData.patientsPerTenant, 24);
 assert.equal(health.outcomeDemoData.tenantsReady, 1);
 const captureHtml = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
 const stylesCss = await readFile(new URL('../public/styles.css', import.meta.url), 'utf8');
@@ -375,7 +375,7 @@ assert.equal(ordinaryPatients[0].name, 'テスト患者');
 assert.deepEqual(patients.filter(item => item.facilityPatientId.startsWith('RV')).map(item => item.facilityPatientId).sort(), ['RV001', 'RV002', 'RV003']);
 assert.deepEqual(patients.filter(item => item.facilityPatientId.startsWith('RAP')).map(item => item.facilityPatientId).sort(), ['RAP001', 'RAP002', 'RAP003']);
 assert.deepEqual(patients.filter(item => item.facilityPatientId.startsWith('RAP')).map(item => item.name), ['リハビリAI計画 TEST患者1', 'リハビリAI計画 TEST患者2', 'リハビリAI計画 TEST患者3']);
-assert.deepEqual(patients.filter(item => item.facilityPatientId.startsWith('OUT')).map(item => item.facilityPatientId).sort(), Array.from({ length: 12 }, (_, index) => `OUT${String(index + 1).padStart(3, '0')}`));
+assert.deepEqual(patients.filter(item => item.facilityPatientId.startsWith('OUT')).map(item => item.facilityPatientId).sort(), Array.from({ length: 24 }, (_, index) => `OUT${String(index + 1).padStart(3, '0')}`));
 const voiceSessionResponse = await fetch(`${base}/api/rehab-voice/sessions`, {
   method: 'POST',
   headers: { 'Content-Type': 'application/json', Authorization: auth },
@@ -524,9 +524,9 @@ assert.equal(stagnationFimResponse.status, 201);
 const outcomeCenterResponse = await fetch(`${base}/api/outcome-command-center`, { headers: { Authorization: auth } });
 assert.equal(outcomeCenterResponse.status, 200);
 const outcomeCenter = await outcomeCenterResponse.json();
-assert.equal(outcomeCenter.summary.patientCount, 19);
+assert.equal(outcomeCenter.summary.patientCount, 31);
 assert.equal(outcomeCenter.summary.planReviewCount >= 1, true);
-assert.equal(outcomeCenter.summary.fimRegisteredCount, 13);
+assert.equal(outcomeCenter.summary.fimRegisteredCount, 25);
 assert.equal(outcomeCenter.summary.dataQualityIssueCount >= 1, true);
 assert.equal(outcomeCenter.summary.earlyWarningCount >= 1, true);
 assert.equal(outcomeCenter.earlyWarnings.some(item => item.patientId === patient.id && item.type === 'FIM_STAGNATION' && item.confidence === 0.8), true);
@@ -542,7 +542,7 @@ assert.match(outcomeCenter.managementDashboard.definitions.homeReturnRate, /分�
 assert.equal(outcomeCenter.managementDashboard.benchmark.minimumGroupSize, 3);
 assert.match(outcomeCenter.managementDashboard.benchmark.privacyNote, /患者名・患者IDは出力しません/);
 assert.equal(outcomeCenter.managementDashboard.benchmark.rows.every(row => row.patients >= 3), true);
-assert.equal(outcomeCenter.managementDashboard.therapyComparison.totalPatients, 19);
+assert.equal(outcomeCenter.managementDashboard.therapyComparison.totalPatients, 31);
 assert.equal(outcomeCenter.managementDashboard.therapyComparison.rows.every(row => row.patients >= 3), true);
 assert.match(outcomeCenter.managementDashboard.therapyComparison.note, /因果関係を示しません/);
 assert.match(outcomeCenter.managementDashboard.definitions.therapyUnits, /正式な診療報酬請求単位ではなく/);
@@ -662,7 +662,7 @@ assert.equal(integrationRuns.some(run => run.type === 'CLINICAL_EVENT_CSV'), tru
 const integrationCoverageResponse = await fetch(`${base}/api/integration/coverage`, { headers: { Authorization: auth } });
 assert.equal(integrationCoverageResponse.status, 200);
 const integrationCoverage = await integrationCoverageResponse.json();
-assert.equal(integrationCoverage.patientCount, 20);
+assert.equal(integrationCoverage.patientCount, 32);
 assert.equal(integrationCoverage.quality.duplicatesPrevented >= 2, true);
 assert.equal(integrationCoverage.quality.errorsDetected >= 2, true);
 assert.match(integrationCoverage.note, /実証導入前後の時間測定/);

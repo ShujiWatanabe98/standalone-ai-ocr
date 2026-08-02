@@ -10,7 +10,7 @@ const totals = value => {
   return { motorTotal: motor, cognitiveTotal: cognitive, total: motor + cognitive };
 };
 
-export const outcomeDemoPatientIds = Array.from({ length: 12 }, (_, index) => `OUT${String(index + 1).padStart(3, '0')}`);
+export const outcomeDemoPatientIds = Array.from({ length: 24 }, (_, index) => `OUT${String(index + 1).padStart(3, '0')}`);
 
 export function seedOutcomeDemoData({ db, tenantIds, id, now }) {
   let createdPatients = 0;
