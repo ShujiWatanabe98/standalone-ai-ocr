@@ -1,0 +1,9 @@
+.outcome-early-warning{margin:14px 0;padding:12px;border:1px solid #e4c46d;border-radius:10px;background:#fffdf6}
+.outcome-early-warning h4{margin:0;color:#704f00}
+#outcomeWarningList article{display:grid;grid-template-columns:1fr auto;gap:10px;padding:10px 0;border-top:1px solid #eadfbf}
+#outcomeWarningList article:first-child{border-top:0}
+#outcomeWarningList article.danger strong{color:#9d2921}
+#outcomeWarningList article.warning strong{color:#765900}
+#outcomeWarningList small{display:block;margin-top:3px;color:#657383}
+#outcomeWarningList p{margin:5px 0;font-size:12px}
+@media(max-width:760px){#outcomeWarningList article{grid-template-columns:1fr}#outcomeWarningList button{width:100%}}

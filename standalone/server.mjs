@@ -316,6 +316,14 @@ function dischargeBoardSummary(tenantId, patientId) {
   const tracked = tasks.filter(task => ['RESOLVED','NOT_APPLICABLE'].includes(task.status) || (task.status !== 'NOT_ASSESSED' && task.owner && task.dueDate));
   return { tasks, total: tasks.length, blocking: tasks.filter(task => task.status === 'BLOCKING').length, inProgress: tasks.filter(task => task.status === 'IN_PROGRESS').length, resolved: tasks.filter(task => task.status === 'RESOLVED').length, unassessed: tasks.filter(task => task.status === 'NOT_ASSESSED').length, overdue: active.filter(task => task.dueDate && task.dueDate < today).length, ownerMissing: active.filter(task => !task.owner).length, readiness: tasks.length ? Math.round(tasks.filter(task => ['RESOLVED','NOT_APPLICABLE'].includes(task.status)).length / tasks.length * 100) : 0, tracked: tracked.length, untracked: tasks.length - tracked.length, trackingRate: tasks.length ? Math.round(tracked.length / tasks.length * 100) : 0 };
 }
+function patientOutcomeWarnings(tenantId, patient) {
+  const fim = fimPatientSummary(tenantId, patient.id); const discharge = dischargeBoardSummary(tenantId, patient.id); const warnings = []; const exclusions = [];
+  const confirmed = fim.assessments.filter(item => item.status === 'CONFIRMED' && Number.isFinite(item.total)); const recent = confirmed.slice(-2); const today = new Date().toISOString().slice(0, 10);
+  if (fim.overdue) warnings.push({ type: 'FIM_OVERDUE', severity: 'HIGH', confidence: 1, title: 'FIM評価期限超過', evidence: [`次回評価予定 ${fim.nextDue}`, `最新評価 ${fim.latest?.evaluationDate || '未登録'}`], nextData: '最新のFIM 18項目と評価実施日', action: '本日の評価可否を確認し、評価担当者と実施日を設定', ownerCandidate: '担当PT・OT・ST' });
+  if (recent.length === 2) { const gap = Math.round((new Date(`${recent[1].evaluationDate}T00:00:00Z`) - new Date(`${recent[0].evaluationDate}T00:00:00Z`)) / 86400000); const delta = recent[1].total - recent[0].total; if (gap >= 7 && delta <= 2) warnings.push({ type: 'FIM_STAGNATION', severity: delta < 0 ? 'HIGH' : 'MEDIUM', confidence: 0.8, title: 'FIM改善停滞の確認候補', evidence: [`${recent[0].evaluationDate} ${recent[0].total}点`, `${recent[1].evaluationDate} ${recent[1].total}点`, `${gap}日間で${delta >= 0 ? '+' : ''}${delta}点`], nextData: '停滞項目、訓練実施状況、体調変化、病棟ADL', action: '項目別FIMと多職種記録を確認し、目標・介入・評価条件を再検討', ownerCandidate: 'カンファレンス担当者' }); } else exclusions.push('FIM確定評価が2時点未満のため停滞判定対象外');
+  const planned = fim.profile?.plannedDischargeDate; if (planned) { const daysToDischarge = Math.ceil((new Date(`${planned}T00:00:00Z`) - new Date(`${today}T00:00:00Z`)) / 86400000); if (daysToDischarge >= 0 && daysToDischarge <= 28 && (discharge.blocking || discharge.overdue || discharge.trackingRate < 100)) warnings.push({ type: 'DISCHARGE_DELAY', severity: daysToDischarge <= 14 ? 'HIGH' : 'MEDIUM', confidence: 0.85, title: '退棟予定遅延リスクの確認候補', evidence: [`退棟予定まで${daysToDischarge}日`, `阻害要因 ${discharge.blocking}件`, `期限超過 ${discharge.overdue}件`, `追跡完了率 ${discharge.trackingRate}%`], nextData: '家族意向、住環境、サービス調整、未解決課題の最新状況', action: '阻害要因の担当・期限を再確認し、必要なら退院支援カンファレンスを設定', ownerCandidate: 'MSW・病棟責任者' }); } else exclusions.push(planned ? '退棟予定日まで29日以上のため遅延リスク判定対象外' : '退棟予定日未登録のため遅延リスク判定対象外');
+  return { patientId: patient.id, facilityPatientId: patient.facilityPatientId, name: patient.name, warnings, exclusions };
+}
 function conferenceQuality(brief, startedAt) {
   const proposals = ['changes','blockers','missing','contradictions','decisions'].flatMap(key => Array.isArray(brief[key]) ? brief[key] : []);
   const withSource = proposals.filter(item => item && typeof item === 'object' && String(item.source || '').trim()).length;
@@ -1665,6 +1673,7 @@ const server = http.createServer(async (req, res) => {
         currentSource: Number.isFinite(Number(latestSnapshot?.values?.[goal.key])) ? 'HOSPITAL_SNAPSHOT' : (derivedValues[goal.key] != null ? 'LIVE_SYSTEM' : 'PUBLIC_BASELINE'),
       }));
       const actions = db.outcomeActions.filter(action => action.tenantId === identity.tenantId && action.status !== 'DONE').sort((a, b) => String(a.dueDate || '9999').localeCompare(String(b.dueDate || '9999')));
+      const warningRows = patients.map(patient => patientOutcomeWarnings(identity.tenantId, patient)); const earlyWarnings = warningRows.flatMap(row => row.warnings.map(warning => ({ ...warning, patientId: row.patientId, facilityPatientId: row.facilityPatientId, patientName: row.name }))).sort((a, b) => ({ HIGH: 0, MEDIUM: 1 }[a.severity] - ({ HIGH: 0, MEDIUM: 1 }[b.severity])));
       return sendJson(res, 200, {
         updatedAt: now(),
         summary: {
@@ -1673,8 +1682,9 @@ const server = http.createServer(async (req, res) => {
           planReviewCount: patientRows.filter(row => row.planStatus !== 'CONFIRMED' || row.reviewComments > 0).length,
           dischargeIssueCount: patientRows.filter(row => row.hasDischargeIssue).length,
           dataQualityIssueCount: patientRows.filter(row => row.dataQualityIssues.length).length,
+          earlyWarningCount: earlyWarnings.length,
         },
-        goals, latestSnapshot, actions, patients: patientRows,
+        goals, latestSnapshot, actions, patients: patientRows, earlyWarnings, warningAudit: warningRows,
       });
     }
     if (req.method === 'GET' && url.pathname === '/api/recovery-ward-profile') {
