@@ -326,6 +326,22 @@ function patientOutcomeWarnings(tenantId, patient) {
   const identified = warnings.map(warning => ({ ...warning, id: `warning_${crypto.createHash('sha256').update(`${tenantId}|${patient.id}|${warning.type}|${warning.evidence.join('|')}`).digest('hex').slice(0, 24)}` }));
   return { patientId: patient.id, facilityPatientId: patient.facilityPatientId, name: patient.name, warnings: identified, exclusions };
 }
+function performanceIndexSimulation(tenantId, additionalMotorFim = 0, reducedStayDays = 0) {
+  const rows = db.patients.filter(patient => patient.tenantId === tenantId).flatMap(patient => {
+    const profile = db.recoveryWardProfiles.find(item => item.tenantId === tenantId && item.patientId === patient.id); if (!profile?.admissionDate || !profile.limitDays) return [];
+    const confirmed = db.fimAssessments.filter(item => item.tenantId === tenantId && item.patientId === patient.id && item.status === 'CONFIRMED').sort((a, b) => a.evaluationDate.localeCompare(b.evaluationDate));
+    const admission = confirmed.find(item => item.stage === 'ADMISSION'); const discharge = [...confirmed].reverse().find(item => item.stage === 'DISCHARGE'); if (!admission || !discharge || !Number.isFinite(admission.motorTotal) || !Number.isFinite(discharge.motorTotal)) return [];
+    const stayDays = Math.max(1, Math.round((new Date(`${discharge.evaluationDate}T00:00:00Z`) - new Date(`${profile.admissionDate}T00:00:00Z`)) / 86400000)); const bonus = (admission.scores?.locomotion <= 5 && discharge.scores?.locomotion >= 6 ? 1 : 0) + (admission.scores?.toileting <= 5 && discharge.scores?.toileting >= 6 ? 1 : 0);
+    return [{ patientId: patient.id, motorGain: discharge.motorTotal - admission.motorTotal + bonus, stayQuotient: stayDays / profile.limitDays, stayDays, limitDays: profile.limitDays, bonus }];
+  });
+  const numerator = rows.reduce((sum, row) => sum + row.motorGain, 0); const denominator = rows.reduce((sum, row) => sum + row.stayQuotient, 0); const simulatedNumerator = numerator + rows.length * Math.max(0, Math.min(10, Number(additionalMotorFim) || 0)); const simulatedDenominator = rows.reduce((sum, row) => sum + Math.max(1, row.stayDays - Math.max(0, Math.min(30, Number(reducedStayDays) || 0))) / row.limitDays, 0);
+  return { eligiblePatients: rows.length, numerator: Math.round(numerator * 100) / 100, denominator: Math.round(denominator * 1000) / 1000, currentIndex: denominator ? Math.round(numerator / denominator * 10) / 10 : null, simulatedIndex: simulatedDenominator ? Math.round(simulatedNumerator / simulatedDenominator * 10) / 10 : null, inputs: { additionalMotorFim: Number(additionalMotorFim) || 0, reducedStayDays: Number(reducedStayDays) || 0 }, rows, basis: '退棟患者のFIM運動項目利得合計 ÷ 在棟日数／算定上限日数の合計（令和8年度改定の歩行・車椅子、トイレ動作加点を反映）', disclaimer: '院内検討用の概算です。除外患者、届出期間、正式な施設基準判定は含まず、請求・届出値には使用できません。' };
+}
+function dischargeBlockerRanking(tenantId) {
+  const weight = { HIGH: 3, MEDIUM: 2, LOW: 1 }; const groups = new Map();
+  for (const task of db.dischargeTasks.filter(item => item.tenantId === tenantId && item.status === 'BLOCKING')) { const current = groups.get(task.key) || { key: task.key, label: task.label, patients: 0, score: 0, overdue: 0 }; current.patients += 1; current.score += weight[task.priority] || 1; if (task.dueDate && task.dueDate < new Date().toISOString().slice(0, 10)) current.overdue += 1; groups.set(task.key, current); }
+  return [...groups.values()].sort((a, b) => b.score - a.score || b.overdue - a.overdue || a.label.localeCompare(b.label, 'ja'));
+}
 function conferenceQuality(brief, startedAt) {
   const proposals = ['changes','blockers','missing','contradictions','decisions'].flatMap(key => Array.isArray(brief[key]) ? brief[key] : []);
   const withSource = proposals.filter(item => item && typeof item === 'object' && String(item.source || '').trim()).length;
@@ -1687,9 +1703,10 @@ const server = http.createServer(async (req, res) => {
           dataQualityIssueCount: patientRows.filter(row => row.dataQualityIssues.length).length,
           earlyWarningCount: earlyWarnings.length,
         },
-        goals, latestSnapshot, actions, patients: patientRows, earlyWarnings, warningAudit: warningRows, warningMetrics: { total: earlyWarnings.length, actioned: actionedWarnings, falseAlerts: dismissedWarnings, unresolved: earlyWarnings.length - reviewedWarnings, actionRate: earlyWarnings.length ? Math.round(actionedWarnings / earlyWarnings.length * 100) : 0, falseAlertRate: reviewedWarnings ? Math.round(dismissedWarnings / reviewedWarnings * 100) : 0 },
+        goals, latestSnapshot, actions, patients: patientRows, earlyWarnings, warningAudit: warningRows, blockerRanking: dischargeBlockerRanking(identity.tenantId), performanceIndexSimulation: performanceIndexSimulation(identity.tenantId), warningMetrics: { total: earlyWarnings.length, actioned: actionedWarnings, falseAlerts: dismissedWarnings, unresolved: earlyWarnings.length - reviewedWarnings, actionRate: earlyWarnings.length ? Math.round(actionedWarnings / earlyWarnings.length * 100) : 0, falseAlertRate: reviewedWarnings ? Math.round(dismissedWarnings / reviewedWarnings * 100) : 0 },
       });
     }
+    if (req.method === 'GET' && url.pathname === '/api/outcome-performance-simulation') return sendJson(res, 200, performanceIndexSimulation(identity.tenantId, url.searchParams.get('additionalMotorFim'), url.searchParams.get('reducedStayDays')));
     const outcomeWarningReviewMatch = /^\/api\/outcome-warnings\/([^/]+)\/review$/.exec(url.pathname);
     if (req.method === 'PUT' && outcomeWarningReviewMatch) {
       const body = await readJson(req); const status = ['ACTIONED','FALSE_ALERT','UNRESOLVED'].includes(body.status) ? body.status : '';
