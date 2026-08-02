@@ -46,7 +46,7 @@ const allowedImageTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const databaseUrl = process.env.DATABASE_URL || '';
 const sqlPool = databaseUrl ? new pg.Pool({ connectionString: databaseUrl }) : null;
 
-let db = { version: 12, hospitals: [], patients: [], therapists: [], jobs: [], rehabRecords: [], rehabVoiceSessions: [], rehabPlans: [], rehabPlanContexts: [], outcomeGoals: [], outcomeSnapshots: [], outcomeActions: [], fimAssessments: [], recoveryWardProfiles: [] };
+let db = { version: 13, hospitals: [], patients: [], therapists: [], jobs: [], rehabRecords: [], rehabVoiceSessions: [], rehabPlans: [], rehabPlanContexts: [], outcomeGoals: [], outcomeSnapshots: [], outcomeActions: [], fimAssessments: [], recoveryWardProfiles: [], dischargeTasks: [] };
 let writeChain = Promise.resolve();
 
 if (!['127.0.0.1', 'localhost', '::1'].includes(host) && (!authUser || !authPassword || !encryptionKey)) {
@@ -93,7 +93,8 @@ if (!Array.isArray(db.outcomeSnapshots)) db.outcomeSnapshots = [];
 if (!Array.isArray(db.outcomeActions)) db.outcomeActions = [];
 if (!Array.isArray(db.fimAssessments)) db.fimAssessments = [];
 if (!Array.isArray(db.recoveryWardProfiles)) db.recoveryWardProfiles = [];
-db.version = Math.max(Number(db.version) || 0, 12);
+if (!Array.isArray(db.dischargeTasks)) db.dischargeTasks = [];
+db.version = Math.max(Number(db.version) || 0, 13);
 const outcomeGoalTemplates = [
   { key: 'homeReturnRate', label: '在宅復帰率', unit: '%', publicBaseline: 83, proposedTarget: 85, direction: 'UP', sourceLabel: '西大和リハビリテーション病院 公開実績', sourceUrl: 'https://www.nishiyamato.net/reason/' },
   { key: 'fimGain', label: 'FIM改善', unit: '点', publicBaseline: 27.6, proposedTarget: 30, direction: 'UP', sourceLabel: '西大和リハビリテーション病院 公開実績', sourceUrl: 'https://www.nishiyamato.net/reason/' },
@@ -298,6 +299,16 @@ function fimPatientSummary(tenantId, patientId) {
   const nextDue = latest ? new Date(new Date(`${latest.evaluationDate}T00:00:00Z`).getTime() + interval * 86400000).toISOString().slice(0, 10) : profile?.admissionDate || null;
   const limitDate = profile?.admissionDate && profile?.limitDays ? new Date(new Date(`${profile.admissionDate}T00:00:00Z`).getTime() + (profile.limitDays - 1) * 86400000).toISOString().slice(0, 10) : null;
   return { assessments, admission, latest, gain, days, efficiency: gain != null && days > 0 ? Math.round(gain / days * 1000) / 1000 : null, hasMissing: assessments.some(item => item.missingItems?.length), nextDue, overdue: Boolean(nextDue && nextDue < new Date().toISOString().slice(0, 10) && !profile?.dischargeDate), limitDate, profile };
+}
+const dischargeTaskTemplates = [
+  ['TOILETING','トイレ動作'],['TRANSFER','移乗'],['WALKING','歩行・移動'],['EATING','食事'],['COGNITION','認知・安全判断'],['MEDICATION','服薬管理'],['VOIDING','排尿・排便管理'],['SWALLOWING','嚥下・食形態'],
+  ['HOME','住環境・段差'],['FAMILY','家族介護力'],['EQUIPMENT','福祉用具・装具'],['HOME_VISIT','退院前訪問'],['FAMILY_TRAINING','家族指導'],['SERVICES','介護保険・地域サービス'],
+];
+function dischargeBoardSummary(tenantId, patientId) {
+  const tasks = db.dischargeTasks.filter(task => task.tenantId === tenantId && task.patientId === patientId).sort((a, b) => a.order - b.order);
+  const today = new Date().toISOString().slice(0, 10);
+  const active = tasks.filter(task => !['RESOLVED','NOT_APPLICABLE'].includes(task.status));
+  return { tasks, total: tasks.length, blocking: tasks.filter(task => task.status === 'BLOCKING').length, inProgress: tasks.filter(task => task.status === 'IN_PROGRESS').length, resolved: tasks.filter(task => task.status === 'RESOLVED').length, unassessed: tasks.filter(task => task.status === 'NOT_ASSESSED').length, overdue: active.filter(task => task.dueDate && task.dueDate < today).length, ownerMissing: active.filter(task => !task.owner).length, readiness: tasks.length ? Math.round(tasks.filter(task => ['RESOLVED','NOT_APPLICABLE'].includes(task.status)).length / tasks.length * 100) : 0 };
 }
 
 function rehabPlanSource(patient, tenantId) {
@@ -1558,6 +1569,7 @@ const server = http.createServer(async (req, res) => {
         const context = db.rehabPlanContexts.find(item => item.tenantId === identity.tenantId && item.patientId === patient.id) || null;
         const jobs = db.jobs.filter(job => job.tenantId === identity.tenantId && job.patientId === patient.id && job.result);
         const fimSummary = fimPatientSummary(identity.tenantId, patient.id);
+        const dischargeBoard = dischargeBoardSummary(identity.tenantId, patient.id);
         const fimValues = jobs.flatMap(job => {
           const result = job.confirmedResult || job.result;
           return (result?.fields || []).filter(field => /FIM|機能的自立度評価/i.test(`${result?.documentType || ''} ${field.label || ''}`) && String(field.value || '').trim()).map(field => ({ label: safeText(field.label, 200), value: safeText(field.value, 100), date: jobEvaluationDate(job) }));
@@ -1577,7 +1589,8 @@ const server = http.createServer(async (req, res) => {
           fimGain: fimSummary.gain, fimEfficiency: fimSummary.efficiency, fimMissing: fimSummary.hasMissing, fimNextDue: fimSummary.nextDue, fimOverdue: fimSummary.overdue,
           wardProfile: fimSummary.profile, limitDate: fimSummary.limitDate,
           reviewComments, dischargeDestination: safeText(context?.dischargeDestination, 500),
-          hasDischargeIssue: Boolean(context && (!context.dischargeDestination || context.unresolvedQuestions || context.risks)),
+          hasDischargeIssue: dischargeBoard.blocking > 0 || Boolean(context && (!context.dischargeDestination || context.unresolvedQuestions || context.risks)),
+          dischargeReadiness: dischargeBoard.readiness, dischargeBlocking: dischargeBoard.blocking, dischargeOverdue: dischargeBoard.overdue, dischargeOwnerMissing: dischargeBoard.ownerMissing,
           dataQualityIssues,
         };
       }).sort((a, b) => (b.reviewComments - a.reviewComments) || a.facilityPatientId.localeCompare(b.facilityPatientId));
@@ -1614,6 +1627,34 @@ const server = http.createServer(async (req, res) => {
       if (!patient) return sendJson(res, 404, { error: '患者が見つかりません' });
       const profile = db.recoveryWardProfiles.find(item => item.tenantId === identity.tenantId && item.patientId === patientId);
       return sendJson(res, 200, profile || { patientId, ...normalizeRecoveryWardProfile({}) });
+    }
+    if (req.method === 'GET' && url.pathname === '/api/discharge-board') {
+      const patientId = safeText(url.searchParams.get('patientId'));
+      const patient = db.patients.find(item => item.tenantId === identity.tenantId && item.id === patientId);
+      if (!patient) return sendJson(res, 404, { error: '患者が見つかりません' });
+      return sendJson(res, 200, { patient: { id: patient.id, facilityPatientId: patient.facilityPatientId, name: patient.name }, templates: dischargeTaskTemplates.map(([key, label]) => ({ key, label })), ...dischargeBoardSummary(identity.tenantId, patient.id) });
+    }
+    if (req.method === 'POST' && url.pathname === '/api/discharge-board/initialize') {
+      const body = await readJson(req); const patient = db.patients.find(item => item.tenantId === identity.tenantId && item.id === body.patientId);
+      if (!patient) return sendJson(res, 400, { error: '患者を選択してください' });
+      const timestamp = now(); let created = 0;
+      for (const [order, [key, label]] of dischargeTaskTemplates.entries()) {
+        if (db.dischargeTasks.some(task => task.tenantId === identity.tenantId && task.patientId === patient.id && task.key === key)) continue;
+        db.dischargeTasks.push({ id: id('discharge-task'), tenantId: identity.tenantId, patientId: patient.id, key, label, order, status: 'NOT_ASSESSED', priority: 'MEDIUM', owner: '', dueDate: '', note: '', createdAt: timestamp, updatedAt: timestamp, revisions: [] }); created += 1;
+      }
+      if (created) await persist(); return sendJson(res, 200, { created, ...dischargeBoardSummary(identity.tenantId, patient.id) });
+    }
+    if (req.method === 'PUT' && url.pathname === '/api/discharge-board') {
+      const body = await readJson(req); const patient = db.patients.find(item => item.tenantId === identity.tenantId && item.id === body.patientId);
+      if (!patient) return sendJson(res, 400, { error: '患者を選択してください' });
+      const updates = Array.isArray(body.tasks) ? body.tasks.slice(0, dischargeTaskTemplates.length) : []; const timestamp = now();
+      for (const update of updates) {
+        const task = db.dischargeTasks.find(item => item.tenantId === identity.tenantId && item.patientId === patient.id && item.id === update.id); if (!task) continue;
+        task.revisions = Array.isArray(task.revisions) ? task.revisions : []; task.revisions.push({ at: timestamp, by: safeText(identity.hospitalName || identity.userId, 200), status: task.status, owner: task.owner, dueDate: task.dueDate, note: task.note });
+        task.status = ['NOT_ASSESSED','BLOCKING','IN_PROGRESS','RESOLVED','NOT_APPLICABLE'].includes(update.status) ? update.status : task.status;
+        task.priority = ['HIGH','MEDIUM','LOW'].includes(update.priority) ? update.priority : task.priority; task.owner = safeText(update.owner, 200); task.dueDate = /^\d{4}-\d{2}-\d{2}$/.test(String(update.dueDate || '')) ? update.dueDate : ''; task.note = safeText(update.note, 2000); task.updatedAt = timestamp;
+      }
+      if (updates.length) await persist(); return sendJson(res, 200, dischargeBoardSummary(identity.tenantId, patient.id));
     }
     if (req.method === 'PUT' && url.pathname === '/api/recovery-ward-profile') {
       const body = await readJson(req);
