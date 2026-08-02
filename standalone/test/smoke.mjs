@@ -495,6 +495,9 @@ assert.equal(outcomeCenter.blockerRanking.some(item => item.key === 'TOILETING' 
 assert.equal(outcomeCenter.performanceIndexSimulation.eligiblePatients, 1);
 assert.equal(outcomeCenter.performanceIndexSimulation.currentIndex > 0, true);
 assert.match(outcomeCenter.performanceIndexSimulation.disclaimer, /請求・届出値には使用できません/);
+assert.equal(outcomeCenter.managementDashboard.groups.length, 3);
+assert.equal(outcomeCenter.managementDashboard.groups.some(group => group.dimension === 'ward' && group.rows.some(row => row.patients >= 1)), true);
+assert.match(outcomeCenter.managementDashboard.definitions.homeReturnRate, /分子/);
 const performanceSimulationResponse = await fetch(`${base}/api/outcome-performance-simulation?additionalMotorFim=2&reducedStayDays=5`, { headers: { Authorization: auth } });
 assert.equal(performanceSimulationResponse.status, 200);
 const performanceSimulation = await performanceSimulationResponse.json();
@@ -528,6 +531,8 @@ assert.equal((await goalUpdateResponse.json()).targetType, 'HOSPITAL_DEFINED');
 const snapshotResponse = await fetch(`${base}/api/outcome-snapshots`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: auth }, body: JSON.stringify({ period: '2026-08', values: { homeReturnRate: 84.5, fimGain: 28.1, performanceIndex: 48.2 }, dataType: 'SAMPLE', note: 'smoke sample' }) });
 assert.equal(snapshotResponse.status, 200);
 assert.equal((await snapshotResponse.json()).dataType, 'SAMPLE');
+const outcomeAfterSnapshot = await fetch(`${base}/api/outcome-command-center`, { headers: { Authorization: auth } }).then(response => response.json());
+assert.equal(outcomeAfterSnapshot.managementDashboard.monthlyTrend.some(item => item.period === '2026-08' && item.targetDifference.homeReturnRate === -1.5), true);
 const actionResponse = await fetch(`${base}/api/outcome-actions`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: auth }, body: JSON.stringify({ patientId: patient.id, category: 'DISCHARGE', title: '家屋確認', owner: 'MSW', dueDate: '2026-08-15' }) });
 assert.equal(actionResponse.status, 201);
 const outcomeAction = await actionResponse.json();
