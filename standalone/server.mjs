@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
 import pg from 'pg';
+import { outcomeDemoPatientIds, seedOutcomeDemoData } from './outcome-demo-seed.mjs';
 import { applyKnownSltaLabels, buildBbsRetryPrompt, buildBitPage1Prompt, buildBitPage2Prompt, buildBitRetryPrompt, buildFmaLowerRetryPrompt, buildFmaUpperRetryPrompt, buildRehainfoOcrPrompt, buildRoutedOcrPrompt, buildSltaProblemResponseRetryPrompt, buildStefRetryPrompt, buildTargetedRetryPrompt, inferOcrRoute, normalizeRehainfoResult } from './rehainfo-ocr-definitions.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -151,6 +152,9 @@ for (const tenantId of rehabAiPlanTenantIds) {
   }
 }
 if (seededRehabAiPlanPatients) await persist();
+const outcomeDemoTenantIds = new Set([facilityId, ...db.hospitals.filter(hospital => hospital.active !== false).map(hospital => hospital.id)]);
+const outcomeDemoSeedResult = seedOutcomeDemoData({ db, tenantIds: outcomeDemoTenantIds, id, now });
+if (outcomeDemoSeedResult.createdPatients || outcomeDemoSeedResult.createdRecords) await persist();
 let migratedTherapistIds = 0;
 const knownTherapistIds = new Map([['田中 陽介', 'PT001'], ['山本 奈緒', 'OT001'], ['伊藤 拓海', 'ST001']]);
 for (const therapist of db.therapists) {
@@ -1464,7 +1468,7 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || `${host}:${port}`}`);
   try {
     if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && !sameOrigin(req)) return sendJson(res, 403, { error: '不正な送信元です' });
-    if (req.method === 'GET' && url.pathname === '/api/health') return sendJson(res, 200, { ok: true, product: 'Standalone AI OCR', release: '2026-08-02-rap-patient-seed-1', model, reasoningEffort, retryReasoningEffort, imageDetail, apiKeyConfigured: Boolean(process.env.OPENAI_API_KEY), rehabAiPlanTestData: { facilityPatientIds: rehabAiPlanPatientSeeds.map(([facilityPatientId]) => facilityPatientId), tenantsReady: [...rehabAiPlanTenantIds].filter(tenantId => rehabAiPlanPatientSeeds.every(([facilityPatientId]) => db.patients.some(patient => patient.tenantId === tenantId && patient.facilityPatientId === facilityPatientId))).length } });
+    if (req.method === 'GET' && url.pathname === '/api/health') return sendJson(res, 200, { ok: true, product: 'Standalone AI OCR', release: '2026-08-02-outcome-demo-seed-1', model, reasoningEffort, retryReasoningEffort, imageDetail, apiKeyConfigured: Boolean(process.env.OPENAI_API_KEY), rehabAiPlanTestData: { facilityPatientIds: rehabAiPlanPatientSeeds.map(([facilityPatientId]) => facilityPatientId), tenantsReady: [...rehabAiPlanTenantIds].filter(tenantId => rehabAiPlanPatientSeeds.every(([facilityPatientId]) => db.patients.some(patient => patient.tenantId === tenantId && patient.facilityPatientId === facilityPatientId))).length }, outcomeDemoData: { facilityPatientIds: outcomeDemoPatientIds, patientsPerTenant: outcomeDemoPatientIds.length, tenantsReady: [...outcomeDemoTenantIds].filter(tenantId => outcomeDemoPatientIds.every(facilityPatientId => db.patients.some(patient => patient.tenantId === tenantId && patient.facilityPatientId === facilityPatientId))).length } });
     if (req.method === 'POST' && url.pathname === '/api/auth/login') {
       if ((!authUser || !authPassword) && db.hospitals.length === 0) return sendJson(res, 200, { ok: true, userId: 'local-user', tenantId: facilityId, role: 'ADMIN', redirect: '/admin.html' });
       if (loginRateLimited(req)) return sendJson(res, 429, { error: 'ログイン失敗が多すぎます。15分後に再試行してください' });
