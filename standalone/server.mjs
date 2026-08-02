@@ -46,7 +46,7 @@ const allowedImageTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const databaseUrl = process.env.DATABASE_URL || '';
 const sqlPool = databaseUrl ? new pg.Pool({ connectionString: databaseUrl }) : null;
 
-let db = { version: 16, hospitals: [], patients: [], therapists: [], jobs: [], rehabRecords: [], rehabVoiceSessions: [], rehabPlans: [], rehabPlanContexts: [], outcomeGoals: [], outcomeSnapshots: [], outcomeActions: [], fimAssessments: [], recoveryWardProfiles: [], dischargeTasks: [], conferences: [], warningReviews: [] };
+let db = { version: 17, hospitals: [], patients: [], therapists: [], jobs: [], rehabRecords: [], rehabVoiceSessions: [], rehabPlans: [], rehabPlanContexts: [], outcomeGoals: [], outcomeSnapshots: [], outcomeActions: [], fimAssessments: [], recoveryWardProfiles: [], dischargeTasks: [], conferences: [], warningReviews: [], integrationRuns: [] };
 let writeChain = Promise.resolve();
 
 if (!['127.0.0.1', 'localhost', '::1'].includes(host) && (!authUser || !authPassword || !encryptionKey)) {
@@ -96,7 +96,8 @@ if (!Array.isArray(db.recoveryWardProfiles)) db.recoveryWardProfiles = [];
 if (!Array.isArray(db.dischargeTasks)) db.dischargeTasks = [];
 if (!Array.isArray(db.conferences)) db.conferences = [];
 if (!Array.isArray(db.warningReviews)) db.warningReviews = [];
-db.version = Math.max(Number(db.version) || 0, 16);
+if (!Array.isArray(db.integrationRuns)) db.integrationRuns = [];
+db.version = Math.max(Number(db.version) || 0, 17);
 const outcomeGoalTemplates = [
   { key: 'homeReturnRate', label: '在宅復帰率', unit: '%', publicBaseline: 83, proposedTarget: 85, direction: 'UP', sourceLabel: '西大和リハビリテーション病院 公開実績', sourceUrl: 'https://www.nishiyamato.net/reason/' },
   { key: 'fimGain', label: 'FIM改善', unit: '点', publicBaseline: 27.6, proposedTarget: 30, direction: 'UP', sourceLabel: '西大和リハビリテーション病院 公開実績', sourceUrl: 'https://www.nishiyamato.net/reason/' },
@@ -1636,6 +1637,10 @@ const server = http.createServer(async (req, res) => {
       if (db.patients.some(p => p.tenantId === identity.tenantId && p.facilityPatientId === facilityPatientId)) return sendJson(res, 409, { error: '同じ施設内患者IDが登録済みです' });
       const patient = { id: id('patient'), tenantId: identity.tenantId, name, facilityPatientId, birthDate: safeText(body.birthDate, 10), createdAt: now(), updatedAt: now() };
       db.patients.push(patient); await persist(); return sendJson(res, 201, publicPatient(patient, identity.tenantId));
+    }
+    if (req.method === 'GET' && url.pathname === '/api/integration/patient-runs') return sendJson(res, 200, db.integrationRuns.filter(item => item.tenantId === identity.tenantId).sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt))).slice(0,20));
+    if (req.method === 'POST' && url.pathname === '/api/integration/patients/import') {
+      const body = await readJson(req); const rows = Array.isArray(body.rows) ? body.rows.slice(0,2000) : []; const dryRun = body.apply !== true; const seen = new Set(); const results = rows.map((raw,index) => { const facilityPatientId=safeText(raw.facilityPatientId,100); const name=safeText(raw.name,200); const birthDate=/^\d{4}-\d{2}-\d{2}$/.test(String(raw.birthDate||''))?String(raw.birthDate):''; if(!facilityPatientId||!name) return {row:index+2,status:'ERROR',facilityPatientId,message:'患者IDと患者名は必須です'}; if(seen.has(facilityPatientId)) return {row:index+2,status:'ERROR',facilityPatientId,message:'CSV内で患者IDが重複しています'}; seen.add(facilityPatientId); const existing=db.patients.find(item=>item.tenantId===identity.tenantId&&item.facilityPatientId===facilityPatientId); if(!existing) return {row:index+2,status:'CREATE',facilityPatientId,name,birthDate,message:'新規登録候補'}; const differences=[]; if(existing.name!==name) differences.push('患者名'); if((existing.birthDate||'')!==birthDate) differences.push('生年月日'); return differences.length?{row:index+2,status:'CONFLICT',facilityPatientId,message:`既存患者と${differences.join('・')}が不一致`}:{row:index+2,status:'UNCHANGED',facilityPatientId,message:'登録済み情報と一致'}; }); const counts=Object.fromEntries(['CREATE','UNCHANGED','CONFLICT','ERROR'].map(status=>[status,results.filter(item=>item.status===status).length])); let created=0; if(!dryRun&&counts.CONFLICT===0&&counts.ERROR===0){const timestamp=now(); for(const item of results.filter(result=>result.status==='CREATE')){db.patients.push({id:id('patient'),tenantId:identity.tenantId,name:item.name,facilityPatientId:item.facilityPatientId,birthDate:item.birthDate,createdAt:timestamp,updatedAt:timestamp,importSource:'PATIENT_CSV'});created+=1;}} const run={id:id('integration-run'),tenantId:identity.tenantId,type:'PATIENT_CSV',mode:dryRun?'PREVIEW':'APPLY',status:!dryRun&&(counts.CONFLICT||counts.ERROR)?'BLOCKED':'COMPLETED',counts,created,issues:results.filter(item=>['CONFLICT','ERROR'].includes(item.status)).slice(0,200),createdAt:now(),createdBy:safeText(identity.hospitalName||identity.userId,200)}; db.integrationRuns.push(run); await persist(); return sendJson(res,run.status==='BLOCKED'?409:200,{...run,results});
     }
     if (req.method === 'GET' && url.pathname === '/api/therapists') {
       return sendJson(res, 200, db.therapists
