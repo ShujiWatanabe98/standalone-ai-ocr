@@ -46,7 +46,7 @@ const allowedImageTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const databaseUrl = process.env.DATABASE_URL || '';
 const sqlPool = databaseUrl ? new pg.Pool({ connectionString: databaseUrl }) : null;
 
-let db = { version: 13, hospitals: [], patients: [], therapists: [], jobs: [], rehabRecords: [], rehabVoiceSessions: [], rehabPlans: [], rehabPlanContexts: [], outcomeGoals: [], outcomeSnapshots: [], outcomeActions: [], fimAssessments: [], recoveryWardProfiles: [], dischargeTasks: [] };
+let db = { version: 14, hospitals: [], patients: [], therapists: [], jobs: [], rehabRecords: [], rehabVoiceSessions: [], rehabPlans: [], rehabPlanContexts: [], outcomeGoals: [], outcomeSnapshots: [], outcomeActions: [], fimAssessments: [], recoveryWardProfiles: [], dischargeTasks: [], conferences: [] };
 let writeChain = Promise.resolve();
 
 if (!['127.0.0.1', 'localhost', '::1'].includes(host) && (!authUser || !authPassword || !encryptionKey)) {
@@ -94,7 +94,8 @@ if (!Array.isArray(db.outcomeActions)) db.outcomeActions = [];
 if (!Array.isArray(db.fimAssessments)) db.fimAssessments = [];
 if (!Array.isArray(db.recoveryWardProfiles)) db.recoveryWardProfiles = [];
 if (!Array.isArray(db.dischargeTasks)) db.dischargeTasks = [];
-db.version = Math.max(Number(db.version) || 0, 13);
+if (!Array.isArray(db.conferences)) db.conferences = [];
+db.version = Math.max(Number(db.version) || 0, 14);
 const outcomeGoalTemplates = [
   { key: 'homeReturnRate', label: '在宅復帰率', unit: '%', publicBaseline: 83, proposedTarget: 85, direction: 'UP', sourceLabel: '西大和リハビリテーション病院 公開実績', sourceUrl: 'https://www.nishiyamato.net/reason/' },
   { key: 'fimGain', label: 'FIM改善', unit: '点', publicBaseline: 27.6, proposedTarget: 30, direction: 'UP', sourceLabel: '西大和リハビリテーション病院 公開実績', sourceUrl: 'https://www.nishiyamato.net/reason/' },
@@ -314,6 +315,16 @@ function dischargeBoardSummary(tenantId, patientId) {
   const active = tasks.filter(task => !['RESOLVED','NOT_APPLICABLE'].includes(task.status));
   const tracked = tasks.filter(task => ['RESOLVED','NOT_APPLICABLE'].includes(task.status) || (task.status !== 'NOT_ASSESSED' && task.owner && task.dueDate));
   return { tasks, total: tasks.length, blocking: tasks.filter(task => task.status === 'BLOCKING').length, inProgress: tasks.filter(task => task.status === 'IN_PROGRESS').length, resolved: tasks.filter(task => task.status === 'RESOLVED').length, unassessed: tasks.filter(task => task.status === 'NOT_ASSESSED').length, overdue: active.filter(task => task.dueDate && task.dueDate < today).length, ownerMissing: active.filter(task => !task.owner).length, readiness: tasks.length ? Math.round(tasks.filter(task => ['RESOLVED','NOT_APPLICABLE'].includes(task.status)).length / tasks.length * 100) : 0, tracked: tracked.length, untracked: tasks.length - tracked.length, trackingRate: tasks.length ? Math.round(tracked.length / tasks.length * 100) : 0 };
+}
+function conferenceBrief(tenantId, patient) {
+  const fim = fimPatientSummary(tenantId, patient.id);
+  const discharge = dischargeBoardSummary(tenantId, patient.id);
+  const plan = db.rehabPlans.filter(item => item.tenantId === tenantId && item.patientId === patient.id).sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)))[0] || null;
+  const voice = db.rehabVoiceSessions.filter(item => item.tenantId === tenantId && item.patientId === patient.id).sort((a, b) => String(b.updatedAt || b.createdAt).localeCompare(String(a.updatedAt || a.createdAt)))[0] || null;
+  const blockers = discharge.tasks.filter(task => task.status === 'BLOCKING').map(task => ({ text: `${task.label}: ${task.note || '対応内容未入力'}`, source: `退院支援ボード ${task.label}` }));
+  const missing = [...(fim.hasMissing ? [{ text: 'FIMに未入力項目があります', source: 'FIM評価' }] : []), ...(fim.overdue ? [{ text: 'FIM評価期限を超過しています', source: 'FIM評価予定' }] : []), ...(discharge.ownerMissing ? [{ text: `退院支援の担当未設定が${discharge.ownerMissing}件あります`, source: '退院支援ボード' }] : []), ...(!plan ? [{ text: 'リハビリAI計画が未作成です', source: 'リハビリAI計画' }] : [])];
+  const decisions = [...blockers.slice(0, 3).map(item => ({ text: `${item.text}の対応方針を決定`, source: item.source })), ...(fim.gain != null ? [{ text: `FIM利得${fim.gain}点を踏まえ次期目標を確認`, source: 'FIM推移' }] : [{ text: 'FIM評価日と次期目標を確認', source: 'FIM評価' }]), ...(discharge.tasks.length ? [{ text: `退院支援の追跡完了率${discharge.trackingRate}%を100%へ上げる担当と期限を決定`, source: '退院支援ボード' }] : [])];
+  return { patient: { id: patient.id, facilityPatientId: patient.facilityPatientId, name: patient.name }, generatedAt: now(), fim: { latest: fim.latest, gain: fim.gain, efficiency: fim.efficiency, nextDue: fim.nextDue }, discharge: { trackingRate: discharge.trackingRate, readiness: discharge.readiness, blocking: discharge.blocking, overdue: discharge.overdue }, changes: [fim.latest ? `最新FIM ${fim.latest.total ?? '未完成'}点（${fim.latest.evaluationDate}）` : 'FIM未登録', fim.gain != null ? `入棟時から${fim.gain >= 0 ? '+' : ''}${fim.gain}点` : 'FIM利得未算出', voice?.summary ? safeText(voice.summary, 500) : '最新の音声要約なし'], blockers, missing, decisions, sources: ['FIM評価・推移', '患者別退院支援ボード', ...(plan ? ['リハビリAI計画'] : []), ...(voice ? ['リハビリボイス'] : [])], previousConference: db.conferences.filter(item => item.tenantId === tenantId && item.patientId === patient.id).sort((a, b) => String(b.heldAt).localeCompare(String(a.heldAt)))[0] || null };
 }
 
 function rehabPlanSource(patient, tenantId) {
@@ -1632,6 +1643,21 @@ const server = http.createServer(async (req, res) => {
       if (!patient) return sendJson(res, 404, { error: '患者が見つかりません' });
       const profile = db.recoveryWardProfiles.find(item => item.tenantId === identity.tenantId && item.patientId === patientId);
       return sendJson(res, 200, profile || { patientId, ...normalizeRecoveryWardProfile({}) });
+    }
+    if (req.method === 'GET' && url.pathname === '/api/conference-brief') {
+      const patientId = safeText(url.searchParams.get('patientId'));
+      const patient = db.patients.find(item => item.tenantId === identity.tenantId && item.id === patientId);
+      if (!patient) return sendJson(res, 404, { error: '患者が見つかりません' });
+      return sendJson(res, 200, conferenceBrief(identity.tenantId, patient));
+    }
+    if (req.method === 'POST' && url.pathname === '/api/conferences') {
+      const body = await readJson(req); const patient = db.patients.find(item => item.tenantId === identity.tenantId && item.id === body.patientId);
+      if (!patient) return sendJson(res, 400, { error: '患者を選択してください' });
+      const timestamp = now(); const action = safeText(body.action, 1000); const owner = safeText(body.owner, 200); const dueDate = /^\d{4}-\d{2}-\d{2}$/.test(String(body.dueDate || '')) ? body.dueDate : '';
+      const conference = { id: id('conference'), tenantId: identity.tenantId, patientId: patient.id, heldAt: /^\d{4}-\d{2}-\d{2}$/.test(String(body.heldAt || '')) ? body.heldAt : timestamp.slice(0, 10), participants: safeText(body.participants, 1000), minutes: safeText(body.minutes, 5000), decision: safeText(body.decision, 2000), action, owner, dueDate, sources: Array.isArray(body.sources) ? body.sources.map(value => safeText(value, 200)).filter(Boolean).slice(0, 20) : [], createdAt: timestamp, createdBy: safeText(identity.hospitalName || identity.userId, 200), revisions: [] };
+      db.conferences.push(conference);
+      if (action) db.outcomeActions.push({ id: id('outcome-action'), tenantId: identity.tenantId, patientId: patient.id, patientLabel: `${patient.facilityPatientId}｜${patient.name}`, category: 'CONFERENCE', title: action, owner, dueDate, status: 'OPEN', createdAt: timestamp, updatedAt: timestamp });
+      await persist(); return sendJson(res, 201, conference);
     }
     if (req.method === 'GET' && url.pathname === '/api/discharge-board') {
       const patientId = safeText(url.searchParams.get('patientId'));

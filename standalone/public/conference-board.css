@@ -1,0 +1,11 @@
+.conference-board{margin:18px 0;border:1px solid #a9bce0;border-radius:10px;background:#fbfcff}
+.conference-board>summary{padding:12px;cursor:pointer;color:#173b67;font-weight:800}
+.conference-toolbar{display:grid;grid-template-columns:1fr auto;gap:8px;padding:0 12px 12px}
+.conference-board #conferenceBrief{padding:0 12px}
+.conference-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:7px}
+.conference-stats span{padding:8px;border-radius:8px;background:#edf5ff;text-align:center;font-size:11px}
+.conference-stats b{display:block;font-size:18px;color:#173b67}
+.conference-board h5{margin:12px 0 5px}.conference-board ul{margin:0;padding-left:22px}.conference-board li{margin:5px 0}.conference-board li small{display:block;color:#657383}
+.conference-sources{padding:8px;border-radius:7px;background:#eef3f9;font-size:11px}
+.conference-board form{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:12px}.conference-board form .wide{grid-column:1/-1}.conference-board textarea{margin:0}
+@media(max-width:760px){.conference-toolbar,.conference-board form{grid-template-columns:1fr}.conference-stats{grid-template-columns:1fr 1fr}.conference-board form .wide{grid-column:auto}}
