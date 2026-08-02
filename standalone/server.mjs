@@ -316,7 +316,15 @@ function dischargeBoardSummary(tenantId, patientId) {
   const tracked = tasks.filter(task => ['RESOLVED','NOT_APPLICABLE'].includes(task.status) || (task.status !== 'NOT_ASSESSED' && task.owner && task.dueDate));
   return { tasks, total: tasks.length, blocking: tasks.filter(task => task.status === 'BLOCKING').length, inProgress: tasks.filter(task => task.status === 'IN_PROGRESS').length, resolved: tasks.filter(task => task.status === 'RESOLVED').length, unassessed: tasks.filter(task => task.status === 'NOT_ASSESSED').length, overdue: active.filter(task => task.dueDate && task.dueDate < today).length, ownerMissing: active.filter(task => !task.owner).length, readiness: tasks.length ? Math.round(tasks.filter(task => ['RESOLVED','NOT_APPLICABLE'].includes(task.status)).length / tasks.length * 100) : 0, tracked: tracked.length, untracked: tasks.length - tracked.length, trackingRate: tasks.length ? Math.round(tracked.length / tasks.length * 100) : 0 };
 }
+function conferenceQuality(brief, startedAt) {
+  const proposals = ['changes','blockers','missing','contradictions','decisions'].flatMap(key => Array.isArray(brief[key]) ? brief[key] : []);
+  const withSource = proposals.filter(item => item && typeof item === 'object' && String(item.source || '').trim()).length;
+  const evidenceCoverage = proposals.length ? Math.round(withSource / proposals.length * 100) : 100;
+  const generationMs = Math.max(0, Date.now() - startedAt);
+  return { ...brief, generationMs, evidenceCoverage, readyForConference: generationMs <= 300000 && evidenceCoverage === 100 };
+}
 function conferenceBrief(tenantId, patient) {
+  const startedAt = Date.now();
   const fim = fimPatientSummary(tenantId, patient.id);
   const discharge = dischargeBoardSummary(tenantId, patient.id);
   const plan = db.rehabPlans.filter(item => item.tenantId === tenantId && item.patientId === patient.id).sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)))[0] || null;
@@ -329,9 +337,12 @@ function conferenceBrief(tenantId, patient) {
   if (/自立|独歩/.test(`${plan?.activity || ''} ${plan?.shortTermGoals || ''}`) && discharge.tasks.some(task => ['TRANSFER','WALKING'].includes(task.key) && task.status === 'BLOCKING')) contradictions.push({ text: '移動自立の計画記載と、移乗・歩行の退院阻害判定が一致していません', source: 'リハビリAI計画 × 退院支援ボード', needsReview: true });
   if (/常食|経口|自立/.test(`${plan?.nutritionAndOral || ''} ${plan?.activity || ''}`) && discharge.tasks.some(task => ['EATING','SWALLOWING'].includes(task.key) && task.status === 'BLOCKING')) contradictions.push({ text: '食事・嚥下の計画記載と退院阻害判定に差があります', source: 'リハビリAI計画 × 退院支援ボード', needsReview: true });
   const decisions = [...blockers.slice(0, 3).map(item => ({ text: `${item.text}の対応方針を決定`, source: item.source })), ...(fim.gain != null ? [{ text: `FIM利得${fim.gain}点を踏まえ次期目標を確認`, source: 'FIM推移' }] : [{ text: 'FIM評価日と次期目標を確認', source: 'FIM評価' }]), ...(discharge.tasks.length ? [{ text: `退院支援の追跡完了率${discharge.trackingRate}%を100%へ上げる担当と期限を決定`, source: '退院支援ボード' }] : [])];
-  return { patient: { id: patient.id, facilityPatientId: patient.facilityPatientId, name: patient.name }, generatedAt: now(), generationMode: 'RULE_BASED', fim: { latest: fim.latest, gain: fim.gain, efficiency: fim.efficiency, nextDue: fim.nextDue }, discharge: { trackingRate: discharge.trackingRate, readiness: discharge.readiness, blocking: discharge.blocking, overdue: discharge.overdue }, changes: [fim.latest ? `最新FIM ${fim.latest.total ?? '未完成'}点（${fim.latest.evaluationDate}）` : 'FIM未登録', fim.gain != null ? `入棟時から${fim.gain >= 0 ? '+' : ''}${fim.gain}点` : 'FIM利得未算出', voice?.summary ? safeText(voice.summary, 500) : '最新の音声要約なし'], blockers, missing, contradictions, decisions, sources: ['FIM評価・推移', '患者別退院支援ボード', ...(plan ? ['リハビリAI計画'] : []), ...(voice ? ['リハビリボイス'] : [])], previousConference: db.conferences.filter(item => item.tenantId === tenantId && item.patientId === patient.id).sort((a, b) => String(b.heldAt).localeCompare(String(a.heldAt)))[0] || null };
+  const conferenceHistory = db.conferences.filter(item => item.tenantId === tenantId && item.patientId === patient.id).sort((a, b) => String(b.heldAt).localeCompare(String(a.heldAt))).slice(0, 10);
+  const changes = [{ text: fim.latest ? `最新FIM ${fim.latest.total ?? '未完成'}点（${fim.latest.evaluationDate}）` : 'FIM未登録', source: 'FIM評価・推移' }, { text: fim.gain != null ? `入棟時から${fim.gain >= 0 ? '+' : ''}${fim.gain}点` : 'FIM利得未算出', source: 'FIM評価・推移' }, { text: voice?.summary ? safeText(voice.summary, 500) : '最新の音声要約なし', source: voice ? 'リハビリボイス' : '院内記録登録状況' }];
+  return conferenceQuality({ patient: { id: patient.id, facilityPatientId: patient.facilityPatientId, name: patient.name }, generatedAt: now(), generationMode: 'RULE_BASED', fim: { latest: fim.latest, gain: fim.gain, efficiency: fim.efficiency, nextDue: fim.nextDue }, discharge: { trackingRate: discharge.trackingRate, readiness: discharge.readiness, blocking: discharge.blocking, overdue: discharge.overdue }, changes, blockers, missing, contradictions, decisions, sources: ['FIM評価・推移', '患者別退院支援ボード', ...(plan ? ['リハビリAI計画'] : []), ...(voice ? ['リハビリボイス'] : []), ...(!voice ? ['院内記録登録状況'] : [])], previousConference: conferenceHistory[0] || null, conferenceHistory }, startedAt);
 }
 async function generateConferenceBrief(apiKey, baseBrief) {
+  const startedAt = Date.now();
   const allowedSources = baseBrief.sources;
   const sourceData = { fim: baseBrief.fim, discharge: baseBrief.discharge, changes: baseBrief.changes, blockers: baseBrief.blockers, missing: baseBrief.missing, contradictions: baseBrief.contradictions, previousConference: baseBrief.previousConference ? { heldAt: baseBrief.previousConference.heldAt, decision: baseBrief.previousConference.decision, minutes: baseBrief.previousConference.minutes } : null };
   const prompt = `あなたは日本の回復期リハビリテーション病棟の多職種カンファレンス準備支援AIです。与えられた院内データだけを根拠に、会議で確認・決定すべき内容を日本語で整理してください。
@@ -353,7 +364,7 @@ ${JSON.stringify(sourceData)}`;
   const payload = await response.json(); if (!response.ok) throw new Error(payload?.error?.message || `OpenAI API error ${response.status}`);
   const parsed = parsePlainModelJson(extractOutputText(payload));
   const items = key => (Array.isArray(parsed?.[key]) ? parsed[key] : []).map(item => ({ text: safeText(item?.text, 1000), source: allowedSources.includes(item?.source) ? item.source : '' })).filter(item => item.text && item.source).slice(0, 10);
-  return { ...baseBrief, changes: items('changes'), contradictions: items('contradictions'), decisions: items('decisions'), missing: items('missing'), generationMode: 'AI_DRAFT', responseId: safeText(payload.id, 120) };
+  return conferenceQuality({ ...baseBrief, changes: items('changes'), contradictions: items('contradictions'), decisions: items('decisions'), missing: items('missing'), generationMode: 'AI_DRAFT', responseId: safeText(payload.id, 120) }, startedAt);
 }
 
 function rehabPlanSource(patient, tenantId) {
