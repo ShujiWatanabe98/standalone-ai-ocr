@@ -6,4 +6,5 @@
 #outcomeWarningList article.warning strong{color:#765900}
 #outcomeWarningList small{display:block;margin-top:3px;color:#657383}
 #outcomeWarningList p{margin:5px 0;font-size:12px}
+.warning-actions{display:grid;gap:6px;align-content:start}.warning-actions button{white-space:nowrap}
 @media(max-width:760px){#outcomeWarningList article{grid-template-columns:1fr}#outcomeWarningList button{width:100%}}

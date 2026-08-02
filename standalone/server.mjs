@@ -46,7 +46,7 @@ const allowedImageTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const databaseUrl = process.env.DATABASE_URL || '';
 const sqlPool = databaseUrl ? new pg.Pool({ connectionString: databaseUrl }) : null;
 
-let db = { version: 14, hospitals: [], patients: [], therapists: [], jobs: [], rehabRecords: [], rehabVoiceSessions: [], rehabPlans: [], rehabPlanContexts: [], outcomeGoals: [], outcomeSnapshots: [], outcomeActions: [], fimAssessments: [], recoveryWardProfiles: [], dischargeTasks: [], conferences: [] };
+let db = { version: 15, hospitals: [], patients: [], therapists: [], jobs: [], rehabRecords: [], rehabVoiceSessions: [], rehabPlans: [], rehabPlanContexts: [], outcomeGoals: [], outcomeSnapshots: [], outcomeActions: [], fimAssessments: [], recoveryWardProfiles: [], dischargeTasks: [], conferences: [], warningReviews: [] };
 let writeChain = Promise.resolve();
 
 if (!['127.0.0.1', 'localhost', '::1'].includes(host) && (!authUser || !authPassword || !encryptionKey)) {
@@ -95,7 +95,8 @@ if (!Array.isArray(db.fimAssessments)) db.fimAssessments = [];
 if (!Array.isArray(db.recoveryWardProfiles)) db.recoveryWardProfiles = [];
 if (!Array.isArray(db.dischargeTasks)) db.dischargeTasks = [];
 if (!Array.isArray(db.conferences)) db.conferences = [];
-db.version = Math.max(Number(db.version) || 0, 14);
+if (!Array.isArray(db.warningReviews)) db.warningReviews = [];
+db.version = Math.max(Number(db.version) || 0, 15);
 const outcomeGoalTemplates = [
   { key: 'homeReturnRate', label: '在宅復帰率', unit: '%', publicBaseline: 83, proposedTarget: 85, direction: 'UP', sourceLabel: '西大和リハビリテーション病院 公開実績', sourceUrl: 'https://www.nishiyamato.net/reason/' },
   { key: 'fimGain', label: 'FIM改善', unit: '点', publicBaseline: 27.6, proposedTarget: 30, direction: 'UP', sourceLabel: '西大和リハビリテーション病院 公開実績', sourceUrl: 'https://www.nishiyamato.net/reason/' },
@@ -322,7 +323,8 @@ function patientOutcomeWarnings(tenantId, patient) {
   if (fim.overdue) warnings.push({ type: 'FIM_OVERDUE', severity: 'HIGH', confidence: 1, title: 'FIM評価期限超過', evidence: [`次回評価予定 ${fim.nextDue}`, `最新評価 ${fim.latest?.evaluationDate || '未登録'}`], nextData: '最新のFIM 18項目と評価実施日', action: '本日の評価可否を確認し、評価担当者と実施日を設定', ownerCandidate: '担当PT・OT・ST' });
   if (recent.length === 2) { const gap = Math.round((new Date(`${recent[1].evaluationDate}T00:00:00Z`) - new Date(`${recent[0].evaluationDate}T00:00:00Z`)) / 86400000); const delta = recent[1].total - recent[0].total; if (gap >= 7 && delta <= 2) warnings.push({ type: 'FIM_STAGNATION', severity: delta < 0 ? 'HIGH' : 'MEDIUM', confidence: 0.8, title: 'FIM改善停滞の確認候補', evidence: [`${recent[0].evaluationDate} ${recent[0].total}点`, `${recent[1].evaluationDate} ${recent[1].total}点`, `${gap}日間で${delta >= 0 ? '+' : ''}${delta}点`], nextData: '停滞項目、訓練実施状況、体調変化、病棟ADL', action: '項目別FIMと多職種記録を確認し、目標・介入・評価条件を再検討', ownerCandidate: 'カンファレンス担当者' }); } else exclusions.push('FIM確定評価が2時点未満のため停滞判定対象外');
   const planned = fim.profile?.plannedDischargeDate; if (planned) { const daysToDischarge = Math.ceil((new Date(`${planned}T00:00:00Z`) - new Date(`${today}T00:00:00Z`)) / 86400000); if (daysToDischarge >= 0 && daysToDischarge <= 28 && (discharge.blocking || discharge.overdue || discharge.trackingRate < 100)) warnings.push({ type: 'DISCHARGE_DELAY', severity: daysToDischarge <= 14 ? 'HIGH' : 'MEDIUM', confidence: 0.85, title: '退棟予定遅延リスクの確認候補', evidence: [`退棟予定まで${daysToDischarge}日`, `阻害要因 ${discharge.blocking}件`, `期限超過 ${discharge.overdue}件`, `追跡完了率 ${discharge.trackingRate}%`], nextData: '家族意向、住環境、サービス調整、未解決課題の最新状況', action: '阻害要因の担当・期限を再確認し、必要なら退院支援カンファレンスを設定', ownerCandidate: 'MSW・病棟責任者' }); } else exclusions.push(planned ? '退棟予定日まで29日以上のため遅延リスク判定対象外' : '退棟予定日未登録のため遅延リスク判定対象外');
-  return { patientId: patient.id, facilityPatientId: patient.facilityPatientId, name: patient.name, warnings, exclusions };
+  const identified = warnings.map(warning => ({ ...warning, id: `warning_${crypto.createHash('sha256').update(`${tenantId}|${patient.id}|${warning.type}|${warning.evidence.join('|')}`).digest('hex').slice(0, 24)}` }));
+  return { patientId: patient.id, facilityPatientId: patient.facilityPatientId, name: patient.name, warnings: identified, exclusions };
 }
 function conferenceQuality(brief, startedAt) {
   const proposals = ['changes','blockers','missing','contradictions','decisions'].flatMap(key => Array.isArray(brief[key]) ? brief[key] : []);
@@ -1673,7 +1675,8 @@ const server = http.createServer(async (req, res) => {
         currentSource: Number.isFinite(Number(latestSnapshot?.values?.[goal.key])) ? 'HOSPITAL_SNAPSHOT' : (derivedValues[goal.key] != null ? 'LIVE_SYSTEM' : 'PUBLIC_BASELINE'),
       }));
       const actions = db.outcomeActions.filter(action => action.tenantId === identity.tenantId && action.status !== 'DONE').sort((a, b) => String(a.dueDate || '9999').localeCompare(String(b.dueDate || '9999')));
-      const warningRows = patients.map(patient => patientOutcomeWarnings(identity.tenantId, patient)); const earlyWarnings = warningRows.flatMap(row => row.warnings.map(warning => ({ ...warning, patientId: row.patientId, facilityPatientId: row.facilityPatientId, patientName: row.name }))).sort((a, b) => ({ HIGH: 0, MEDIUM: 1 }[a.severity] - ({ HIGH: 0, MEDIUM: 1 }[b.severity])));
+      const warningRows = patients.map(patient => patientOutcomeWarnings(identity.tenantId, patient)); const tenantWarningReviews = db.warningReviews.filter(item => item.tenantId === identity.tenantId); const earlyWarnings = warningRows.flatMap(row => row.warnings.map(warning => ({ ...warning, patientId: row.patientId, facilityPatientId: row.facilityPatientId, patientName: row.name, review: tenantWarningReviews.find(item => item.warningId === warning.id) || null }))).sort((a, b) => ({ HIGH: 0, MEDIUM: 1 }[a.severity] - ({ HIGH: 0, MEDIUM: 1 }[b.severity])));
+      const actionedWarnings = earlyWarnings.filter(item => item.review?.status === 'ACTIONED').length; const dismissedWarnings = earlyWarnings.filter(item => item.review?.status === 'FALSE_ALERT').length; const reviewedWarnings = actionedWarnings + dismissedWarnings;
       return sendJson(res, 200, {
         updatedAt: now(),
         summary: {
@@ -1684,8 +1687,17 @@ const server = http.createServer(async (req, res) => {
           dataQualityIssueCount: patientRows.filter(row => row.dataQualityIssues.length).length,
           earlyWarningCount: earlyWarnings.length,
         },
-        goals, latestSnapshot, actions, patients: patientRows, earlyWarnings, warningAudit: warningRows,
+        goals, latestSnapshot, actions, patients: patientRows, earlyWarnings, warningAudit: warningRows, warningMetrics: { total: earlyWarnings.length, actioned: actionedWarnings, falseAlerts: dismissedWarnings, unresolved: earlyWarnings.length - reviewedWarnings, actionRate: earlyWarnings.length ? Math.round(actionedWarnings / earlyWarnings.length * 100) : 0, falseAlertRate: reviewedWarnings ? Math.round(dismissedWarnings / reviewedWarnings * 100) : 0 },
       });
+    }
+    const outcomeWarningReviewMatch = /^\/api\/outcome-warnings\/([^/]+)\/review$/.exec(url.pathname);
+    if (req.method === 'PUT' && outcomeWarningReviewMatch) {
+      const body = await readJson(req); const status = ['ACTIONED','FALSE_ALERT','UNRESOLVED'].includes(body.status) ? body.status : '';
+      if (!status) return sendJson(res, 400, { error: '警告の確認結果を選択してください' });
+      const warningId = safeText(outcomeWarningReviewMatch[1], 100); const timestamp = now(); let review = db.warningReviews.find(item => item.tenantId === identity.tenantId && item.warningId === warningId);
+      if (!review) { review = { id: id('warning-review'), tenantId: identity.tenantId, warningId, createdAt: timestamp, revisions: [] }; db.warningReviews.push(review); }
+      else { review.revisions = Array.isArray(review.revisions) ? review.revisions : []; review.revisions.push({ at: timestamp, by: safeText(identity.hospitalName || identity.userId, 200), status: review.status, note: review.note }); }
+      Object.assign(review, { status, note: safeText(body.note, 1000), updatedAt: timestamp, updatedBy: safeText(identity.hospitalName || identity.userId, 200) }); await persist(); return sendJson(res, 200, review);
     }
     if (req.method === 'GET' && url.pathname === '/api/recovery-ward-profile') {
       const patientId = safeText(url.searchParams.get('patientId'));
