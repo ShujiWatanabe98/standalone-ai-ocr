@@ -477,6 +477,7 @@ assert.equal(managementExportResponse.status, 200);
 assert.match(managementExportResponse.headers.get('content-type'), /text\/csv/);
 const managementCsv = await managementExportResponse.text();
 assert.match(managementCsv, /平均FIM利得/);
+assert.match(managementCsv, /平均参考単位数/);
 assert.doesNotMatch(managementCsv, /patientName|facilityPatientId/);
 const fimOcrNoKeyResponse = await fetch(`${base}/api/fim-ocr`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: auth }, body: JSON.stringify({ imageDataUrl: 'data:image/png;base64,iVBORw0KGgo=' }) });
 assert.equal(fimOcrNoKeyResponse.status, 503);
@@ -507,6 +508,10 @@ assert.match(outcomeCenter.managementDashboard.definitions.homeReturnRate, /分�
 assert.equal(outcomeCenter.managementDashboard.benchmark.minimumGroupSize, 3);
 assert.match(outcomeCenter.managementDashboard.benchmark.privacyNote, /患者名・患者IDは出力しません/);
 assert.equal(outcomeCenter.managementDashboard.benchmark.rows.every(row => row.patients >= 3), true);
+assert.equal(outcomeCenter.managementDashboard.therapyComparison.totalPatients, 4);
+assert.equal(outcomeCenter.managementDashboard.therapyComparison.rows.every(row => row.patients >= 3), true);
+assert.match(outcomeCenter.managementDashboard.therapyComparison.note, /因果関係を示しません/);
+assert.match(outcomeCenter.managementDashboard.definitions.therapyUnits, /正式な診療報酬請求単位ではなく/);
 const performanceSimulationResponse = await fetch(`${base}/api/outcome-performance-simulation?additionalMotorFim=2&reducedStayDays=5`, { headers: { Authorization: auth } });
 assert.equal(performanceSimulationResponse.status, 200);
 const performanceSimulation = await performanceSimulationResponse.json();
