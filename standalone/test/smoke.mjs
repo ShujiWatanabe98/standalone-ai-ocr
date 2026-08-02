@@ -54,7 +54,7 @@ assert.match(rehabSessionApp, /data-rehab-voice-delete/);
 assert.match(rehabSessionApp, /リハビリボイス履歴を削除します/);
 assert.match(rehabPlanApp, /therapistManagementPanel\.insertAdjacentElement\('afterend', rehabPlanSection\)/);
 assert.match(outcomeCommandCenterApp, /querySelector\('#view-rehab-plan'\)/);
-assert.doesNotMatch(outcomeCommandCenterApp, /西大和モデル：/);
+assert.doesNotMatch(outcomeCommandCenterApp, /\u897f\u5927\u548c/u);
 assert.match(outcomeCommandCenterApp, /在宅復帰、FIM改善、実績指数を軸に/);
 const cameraCss = await readFile(new URL('../public/camera-capture.css', import.meta.url), 'utf8');
 const captureCss = await readFile(new URL('../public/capture-layout.css', import.meta.url), 'utf8');
@@ -763,7 +763,7 @@ const pilotReportResponse = await fetch(`${base}/api/pilot/report.html`, { heade
 assert.equal(pilotReportResponse.status, 200);
 assert.match(pilotReportResponse.headers.get('content-type'), /text\/html/);
 const pilotReport = await pilotReportResponse.text();
-assert.match(pilotReport, /西大和モデル 実証導入結果報告/);
+assert.match(pilotReport, /実証導入結果報告/);
 assert.match(pilotReport, /総合判定：<strong>本導入候補<\/strong>/);
 assert.match(pilotReport, /患者名・患者IDを含まない/);
 assert.match(pilotReport, /病院責任者/);
