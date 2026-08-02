@@ -47,6 +47,10 @@ const cameraCss = await readFile(new URL('../public/camera-capture.css', import.
 const captureCss = await readFile(new URL('../public/capture-layout.css', import.meta.url), 'utf8');
 const patientTimelineCss = await readFile(new URL('../public/patient-timeline.css', import.meta.url), 'utf8');
 const serverSource = await readFile(new URL('../server.mjs', import.meta.url), 'utf8');
+const outcomeCommandApp = await readFile(new URL('../public/outcome-command-center.js', import.meta.url), 'utf8');
+assert.match(outcomeCommandApp, /M6 連携履歴・エラー追跡/);
+assert.match(outcomeCommandApp, /停止理由/);
+assert.match(outcomeCommandApp, /loadIntegrationRuns/);
 assert.match(serverSource, /reasoning:\s*\{\s*effort:\s*reasoningEffort\s*\}/);
 assert.match(serverSource, /buildRoutedOcrPrompt/);
 assert.match(serverSource, /\{\s*1:\s*32,\s*2:\s*29,\s*3:\s*9/);
