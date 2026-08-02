@@ -46,7 +46,7 @@ const allowedImageTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const databaseUrl = process.env.DATABASE_URL || '';
 const sqlPool = databaseUrl ? new pg.Pool({ connectionString: databaseUrl }) : null;
 
-let db = { version: 23, hospitals: [], patients: [], therapists: [], jobs: [], rehabRecords: [], rehabVoiceSessions: [], rehabPlans: [], rehabPlanContexts: [], outcomeGoals: [], outcomeSnapshots: [], outcomeActions: [], fimAssessments: [], recoveryWardProfiles: [], dischargeTasks: [], conferences: [], warningReviews: [], integrationRuns: [], clinicalEvents: [], pilotTimeMeasurements: [], pilotSafetyEvents: [], pilotStaffFeedback: [], pilotStudies: [], pilotApprovals: [] };
+let db = { version: 24, hospitals: [], patients: [], therapists: [], jobs: [], rehabRecords: [], rehabVoiceSessions: [], rehabPlans: [], rehabPlanContexts: [], outcomeGoals: [], outcomeSnapshots: [], outcomeActions: [], fimAssessments: [], recoveryWardProfiles: [], dischargeTasks: [], conferences: [], warningReviews: [], integrationRuns: [], clinicalEvents: [], pilotTimeMeasurements: [], pilotSafetyEvents: [], pilotStaffFeedback: [], pilotStudies: [], pilotApprovals: [], pilotExpansions: [] };
 let writeChain = Promise.resolve();
 
 if (!['127.0.0.1', 'localhost', '::1'].includes(host) && (!authUser || !authPassword || !encryptionKey)) {
@@ -103,7 +103,8 @@ if (!Array.isArray(db.pilotSafetyEvents)) db.pilotSafetyEvents = [];
 if (!Array.isArray(db.pilotStaffFeedback)) db.pilotStaffFeedback = [];
 if (!Array.isArray(db.pilotStudies)) db.pilotStudies = [];
 if (!Array.isArray(db.pilotApprovals)) db.pilotApprovals = [];
-db.version = Math.max(Number(db.version) || 0, 23);
+if (!Array.isArray(db.pilotExpansions)) db.pilotExpansions = [];
+db.version = Math.max(Number(db.version) || 0, 24);
 const outcomeGoalTemplates = [
   { key: 'homeReturnRate', label: '在宅復帰率', unit: '%', publicBaseline: 83, proposedTarget: 85, direction: 'UP', sourceLabel: '西大和リハビリテーション病院 公開実績', sourceUrl: 'https://www.nishiyamato.net/reason/' },
   { key: 'fimGain', label: 'FIM改善', unit: '点', publicBaseline: 27.6, proposedTarget: 30, direction: 'UP', sourceLabel: '西大和リハビリテーション病院 公開実績', sourceUrl: 'https://www.nishiyamato.net/reason/' },
@@ -1727,6 +1728,12 @@ const server = http.createServer(async (req, res) => {
     }
     if(req.method==='POST'&&url.pathname==='/api/pilot/approvals'){
       const body=await readJson(req),role=String(body.role||'').toUpperCase(),decision=String(body.decision||'').toUpperCase(),approverName=safeText(body.approverName,200),comment=safeText(body.comment,2000);if(!['HOSPITAL_DIRECTOR','INFORMATION_SECURITY','CLINICAL_REPRESENTATIVE'].includes(role))return sendJson(res,400,{error:'承認者区分を選択してください'});if(!['APPROVE','REJECT'].includes(decision))return sendJson(res,400,{error:'承認または却下を選択してください'});if(!approverName)return sendJson(res,400,{error:'確認者名は必須です'});if(decision==='REJECT'&&!comment)return sendJson(res,400,{error:'却下理由を入力してください'});const item={id:id('pilot-approval'),tenantId:identity.tenantId,role,decision,approverName,comment,createdAt:now(),createdBy:safeText(identity.hospitalName||identity.userId,200)};db.pilotApprovals.push(item);await persist();return sendJson(res,201,item);
+    }
+    if(req.method==='GET'&&url.pathname==='/api/pilot/expansions'){
+      const roles=['HOSPITAL_DIRECTOR','INFORMATION_SECURITY','CLINICAL_REPRESENTATIVE'],approvals=db.pilotApprovals.filter(item=>item.tenantId===identity.tenantId).sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt))),formallyApproved=roles.every(role=>approvals.find(item=>item.role===role)?.decision==='APPROVE');const safety=db.pilotSafetyEvents.filter(item=>item.tenantId===identity.tenantId),safe=safety.every(item=>item.severity!=='SERIOUS'&&item.status!=='OPEN');return sendJson(res,200,{eligible:formallyApproved&&safe,formalApproval:formallyApproved,safetyClear:safe,expansions:db.pilotExpansions.filter(item=>item.tenantId===identity.tenantId).sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt))),note:'三者の正式承認と安全確認が揃った場合だけ拡大計画を登録できます。拡大後も重点監視期間中は安全事象と業務時間を継続測定してください。'});
+    }
+    if(req.method==='POST'&&url.pathname==='/api/pilot/expansions'){
+      const roles=['HOSPITAL_DIRECTOR','INFORMATION_SECURITY','CLINICAL_REPRESENTATIVE'],approvals=db.pilotApprovals.filter(item=>item.tenantId===identity.tenantId).sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt)));if(!roles.every(role=>approvals.find(item=>item.role===role)?.decision==='APPROVE'))return sendJson(res,409,{error:'三者の正式承認が揃うまで病棟拡大は登録できません'});if(db.pilotSafetyEvents.some(item=>item.tenantId===identity.tenantId&&(item.severity==='SERIOUS'||item.status==='OPEN')))return sendJson(res,409,{error:'重大または未解決の安全事象があるため拡大できません'});const body=await readJson(req),wardName=safeText(body.wardName,200),owner=safeText(body.owner,200),startDate=String(body.startDate||''),patientLimit=Number(body.patientLimit),monitoringDays=Number(body.monitoringDays);if(!wardName||!owner)return sendJson(res,400,{error:'拡大対象病棟と責任者は必須です'});if(!/^\d{4}-\d{2}-\d{2}$/.test(startDate))return sendJson(res,400,{error:'拡大開始日を入力してください'});if(!Number.isInteger(patientLimit)||patientLimit<1||patientLimit>1000)return sendJson(res,400,{error:'患者上限は1～1000人で入力してください'});if(!Number.isInteger(monitoringDays)||monitoringDays<7||monitoringDays>90)return sendJson(res,400,{error:'重点監視期間は7～90日で入力してください'});const item={id:id('pilot-expansion'),tenantId:identity.tenantId,wardName,owner,startDate,patientLimit,monitoringDays,status:'PLANNED',note:safeText(body.note,2000),createdAt:now(),createdBy:safeText(identity.hospitalName||identity.userId,200)};db.pilotExpansions.push(item);await persist();return sendJson(res,201,item);
     }
     if (req.method === 'GET' && url.pathname === '/api/therapists') {
       return sendJson(res, 200, db.therapists
