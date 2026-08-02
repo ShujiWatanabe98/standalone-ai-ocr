@@ -46,7 +46,7 @@ const allowedImageTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const databaseUrl = process.env.DATABASE_URL || '';
 const sqlPool = databaseUrl ? new pg.Pool({ connectionString: databaseUrl }) : null;
 
-let db = { version: 15, hospitals: [], patients: [], therapists: [], jobs: [], rehabRecords: [], rehabVoiceSessions: [], rehabPlans: [], rehabPlanContexts: [], outcomeGoals: [], outcomeSnapshots: [], outcomeActions: [], fimAssessments: [], recoveryWardProfiles: [], dischargeTasks: [], conferences: [], warningReviews: [] };
+let db = { version: 16, hospitals: [], patients: [], therapists: [], jobs: [], rehabRecords: [], rehabVoiceSessions: [], rehabPlans: [], rehabPlanContexts: [], outcomeGoals: [], outcomeSnapshots: [], outcomeActions: [], fimAssessments: [], recoveryWardProfiles: [], dischargeTasks: [], conferences: [], warningReviews: [] };
 let writeChain = Promise.resolve();
 
 if (!['127.0.0.1', 'localhost', '::1'].includes(host) && (!authUser || !authPassword || !encryptionKey)) {
@@ -96,7 +96,7 @@ if (!Array.isArray(db.recoveryWardProfiles)) db.recoveryWardProfiles = [];
 if (!Array.isArray(db.dischargeTasks)) db.dischargeTasks = [];
 if (!Array.isArray(db.conferences)) db.conferences = [];
 if (!Array.isArray(db.warningReviews)) db.warningReviews = [];
-db.version = Math.max(Number(db.version) || 0, 15);
+db.version = Math.max(Number(db.version) || 0, 16);
 const outcomeGoalTemplates = [
   { key: 'homeReturnRate', label: '在宅復帰率', unit: '%', publicBaseline: 83, proposedTarget: 85, direction: 'UP', sourceLabel: '西大和リハビリテーション病院 公開実績', sourceUrl: 'https://www.nishiyamato.net/reason/' },
   { key: 'fimGain', label: 'FIM改善', unit: '点', publicBaseline: 27.6, proposedTarget: 30, direction: 'UP', sourceLabel: '西大和リハビリテーション病院 公開実績', sourceUrl: 'https://www.nishiyamato.net/reason/' },
@@ -341,6 +341,14 @@ function dischargeBlockerRanking(tenantId) {
   const weight = { HIGH: 3, MEDIUM: 2, LOW: 1 }; const groups = new Map();
   for (const task of db.dischargeTasks.filter(item => item.tenantId === tenantId && item.status === 'BLOCKING')) { const current = groups.get(task.key) || { key: task.key, label: task.label, patients: 0, score: 0, overdue: 0 }; current.patients += 1; current.score += weight[task.priority] || 1; if (task.dueDate && task.dueDate < new Date().toISOString().slice(0, 10)) current.overdue += 1; groups.set(task.key, current); }
   return [...groups.values()].sort((a, b) => b.score - a.score || b.overdue - a.overdue || a.label.localeCompare(b.label, 'ja'));
+}
+function warningOutcomeComparisons(tenantId) {
+  return db.warningReviews.filter(item => item.tenantId === tenantId && item.status === 'ACTIONED' && item.snapshot?.patientId).map(review => {
+    const patient = db.patients.find(item => item.tenantId === tenantId && item.id === review.snapshot.patientId); const fim = fimPatientSummary(tenantId, review.snapshot.patientId); const discharge = dischargeBoardSummary(tenantId, review.snapshot.patientId); let status = 'PENDING'; let result = '次回評価待ち'; let delta = null;
+    if (['FIM_STAGNATION','FIM_OVERDUE'].includes(review.snapshot.warningType) && fim.latest?.evaluationDate > String(review.snapshot.latestFimDate || '')) { delta = fim.latest.total - Number(review.snapshot.latestFimTotal || 0); status = delta >= 3 ? 'IMPROVED' : 'NOT_IMPROVED'; result = `対応後FIM ${delta >= 0 ? '+' : ''}${delta}点（${fim.latest.evaluationDate}）`; }
+    if (review.snapshot.warningType === 'DISCHARGE_DELAY') { if (fim.profile?.dischargeDate) { status = 'IMPROVED'; result = `退棟日 ${fim.profile.dischargeDate}`; } else if (discharge.blocking < Number(review.snapshot.blocking || 0) || discharge.overdue < Number(review.snapshot.overdue || 0)) { status = 'IMPROVED'; result = `阻害要因 ${review.snapshot.blocking}→${discharge.blocking}件、期限超過 ${review.snapshot.overdue}→${discharge.overdue}件`; } }
+    return { warningId: review.warningId, patientId: review.snapshot.patientId, facilityPatientId: patient?.facilityPatientId || '', patientName: patient?.name || '', warningType: review.snapshot.warningType, title: review.snapshot.title, actionedAt: review.updatedAt, baseline: review.snapshot, status, result, delta };
+  }).sort((a, b) => String(b.actionedAt).localeCompare(String(a.actionedAt)));
 }
 function conferenceQuality(brief, startedAt) {
   const proposals = ['changes','blockers','missing','contradictions','decisions'].flatMap(key => Array.isArray(brief[key]) ? brief[key] : []);
@@ -1692,7 +1700,7 @@ const server = http.createServer(async (req, res) => {
       }));
       const actions = db.outcomeActions.filter(action => action.tenantId === identity.tenantId && action.status !== 'DONE').sort((a, b) => String(a.dueDate || '9999').localeCompare(String(b.dueDate || '9999')));
       const warningRows = patients.map(patient => patientOutcomeWarnings(identity.tenantId, patient)); const tenantWarningReviews = db.warningReviews.filter(item => item.tenantId === identity.tenantId); const earlyWarnings = warningRows.flatMap(row => row.warnings.map(warning => ({ ...warning, patientId: row.patientId, facilityPatientId: row.facilityPatientId, patientName: row.name, review: tenantWarningReviews.find(item => item.warningId === warning.id) || null }))).sort((a, b) => ({ HIGH: 0, MEDIUM: 1 }[a.severity] - ({ HIGH: 0, MEDIUM: 1 }[b.severity])));
-      const actionedWarnings = earlyWarnings.filter(item => item.review?.status === 'ACTIONED').length; const dismissedWarnings = earlyWarnings.filter(item => item.review?.status === 'FALSE_ALERT').length; const reviewedWarnings = actionedWarnings + dismissedWarnings;
+      const actionedWarnings = tenantWarningReviews.filter(item => item.status === 'ACTIONED').length; const dismissedWarnings = tenantWarningReviews.filter(item => item.status === 'FALSE_ALERT').length; const reviewedWarnings = actionedWarnings + dismissedWarnings; const trackedWarningIds = new Set([...earlyWarnings.map(item => item.id), ...tenantWarningReviews.map(item => item.warningId)]); const unresolvedWarnings = earlyWarnings.filter(item => !item.review || item.review.status === 'UNRESOLVED').length;
       return sendJson(res, 200, {
         updatedAt: now(),
         summary: {
@@ -1703,7 +1711,7 @@ const server = http.createServer(async (req, res) => {
           dataQualityIssueCount: patientRows.filter(row => row.dataQualityIssues.length).length,
           earlyWarningCount: earlyWarnings.length,
         },
-        goals, latestSnapshot, actions, patients: patientRows, earlyWarnings, warningAudit: warningRows, blockerRanking: dischargeBlockerRanking(identity.tenantId), performanceIndexSimulation: performanceIndexSimulation(identity.tenantId), warningMetrics: { total: earlyWarnings.length, actioned: actionedWarnings, falseAlerts: dismissedWarnings, unresolved: earlyWarnings.length - reviewedWarnings, actionRate: earlyWarnings.length ? Math.round(actionedWarnings / earlyWarnings.length * 100) : 0, falseAlertRate: reviewedWarnings ? Math.round(dismissedWarnings / reviewedWarnings * 100) : 0 },
+        goals, latestSnapshot, actions, patients: patientRows, earlyWarnings, warningAudit: warningRows, blockerRanking: dischargeBlockerRanking(identity.tenantId), performanceIndexSimulation: performanceIndexSimulation(identity.tenantId), warningOutcomeComparisons: warningOutcomeComparisons(identity.tenantId), warningMetrics: { total: trackedWarningIds.size, active: earlyWarnings.length, actioned: actionedWarnings, falseAlerts: dismissedWarnings, unresolved: unresolvedWarnings, actionRate: trackedWarningIds.size ? Math.round(actionedWarnings / trackedWarningIds.size * 100) : 0, falseAlertRate: reviewedWarnings ? Math.round(dismissedWarnings / reviewedWarnings * 100) : 0 },
       });
     }
     if (req.method === 'GET' && url.pathname === '/api/outcome-performance-simulation') return sendJson(res, 200, performanceIndexSimulation(identity.tenantId, url.searchParams.get('additionalMotorFim'), url.searchParams.get('reducedStayDays')));
@@ -1712,7 +1720,7 @@ const server = http.createServer(async (req, res) => {
       const body = await readJson(req); const status = ['ACTIONED','FALSE_ALERT','UNRESOLVED'].includes(body.status) ? body.status : '';
       if (!status) return sendJson(res, 400, { error: '警告の確認結果を選択してください' });
       const warningId = safeText(outcomeWarningReviewMatch[1], 100); const timestamp = now(); let review = db.warningReviews.find(item => item.tenantId === identity.tenantId && item.warningId === warningId);
-      if (!review) { review = { id: id('warning-review'), tenantId: identity.tenantId, warningId, createdAt: timestamp, revisions: [] }; db.warningReviews.push(review); }
+      if (!review) { const active = db.patients.filter(item => item.tenantId === identity.tenantId).flatMap(patient => patientOutcomeWarnings(identity.tenantId, patient).warnings.map(warning => ({ patient, warning }))).find(item => item.warning.id === warningId); const fim = active ? fimPatientSummary(identity.tenantId, active.patient.id) : null; const discharge = active ? dischargeBoardSummary(identity.tenantId, active.patient.id) : null; review = { id: id('warning-review'), tenantId: identity.tenantId, warningId, createdAt: timestamp, revisions: [], snapshot: active ? { patientId: active.patient.id, warningType: active.warning.type, title: active.warning.title, latestFimDate: fim?.latest?.evaluationDate || '', latestFimTotal: fim?.latest?.total ?? null, blocking: discharge?.blocking || 0, overdue: discharge?.overdue || 0 } : null }; db.warningReviews.push(review); }
       else { review.revisions = Array.isArray(review.revisions) ? review.revisions : []; review.revisions.push({ at: timestamp, by: safeText(identity.hospitalName || identity.userId, 200), status: review.status, note: review.note }); }
       Object.assign(review, { status, note: safeText(body.note, 1000), updatedAt: timestamp, updatedBy: safeText(identity.hospitalName || identity.userId, 200) }); await persist(); return sendJson(res, 200, review);
     }
