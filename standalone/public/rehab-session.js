@@ -26,6 +26,7 @@ let sessionPatients = [];
 let sessionTherapists = [];
 let voicePlaybackStopped = false;
 let activeVoiceAudio = null;
+let activeSpeechResolve = null;
 let pendingRecordedSession = null;
 
 function openAudioDatabase() {
@@ -113,7 +114,7 @@ function openVoiceHistoryDetail(id) {
   if (!item) return;
   byId('rehabVoiceDetailContent').innerHTML = `<div class="jobhead"><div><h2>${escapeMarkup(item.patientLabel)}</h2><p>${escapeMarkup(item.therapistLabel)}・${escapeMarkup(new Date(item.createdAt).toLocaleString('ja-JP'))}・経過時間 ${escapeMarkup(item.duration)}</p></div></div>
     <div class="rehab-voice-history-detail">
-      <section><h3>会話内容</h3><div class="rehab-voice-audio-actions"><button id="playRehabVoiceAi" class="primary" type="button" data-default-label="${item.audioSource === 'ai-test' ? 'テスト用AIボイスを再生' : '録音ボイスを再生'}">${item.audioSource === 'ai-test' ? 'テスト用AIボイスを再生' : '録音ボイスを再生'}</button><button id="stopRehabVoiceAi" type="button" disabled>停止</button><small>${item.audioSource === 'ai-test' ? 'このTEST履歴の音声だけはAIが生成したテスト音声です。' : 'リハビリ中に実際に録音した音声を再生します。'}</small></div><div id="syncedRehabTranscript" class="synced-transcript">${syncedTranscriptMarkup(item.transcript)}</div></section>
+      <section><h3>会話内容</h3><div class="rehab-voice-audio-actions"><button id="playRehabVoiceAi" class="primary" type="button" data-default-label="${item.audioSource === 'ai-test' ? 'テスト用AIボイスを再生' : '録音ボイスを再生'}">${item.audioSource === 'ai-test' ? 'テスト用AIボイスを再生' : '録音ボイスを再生'}</button><button id="stopRehabVoiceAi" type="button" disabled>停止</button><small>${item.audioSource === 'ai-test' ? 'このTEST履歴の音声だけは端末の音声合成で読み上げます。' : 'リハビリ中に実際に録音した音声を再生します。'}</small></div><audio id="rehabVoiceHistoryAudio" class="rehab-audio-playback" controls playsinline hidden></audio><div id="syncedRehabTranscript" class="synced-transcript">${syncedTranscriptMarkup(item.transcript)}</div></section>
       <section><h3>1）患者さん目線でのリハビリログ</h3><p>${escapeMarkup(item.patientLog)}</p><p class="rehab-feedback">${escapeMarkup(item.rewardFeedback)}</p></section>
       <section><h3>2）リハビリに関する不安・不満</h3><p>${escapeMarkup(item.concerns)}</p><p class="rehab-feedback">${escapeMarkup(item.empathyFeedback)}</p></section>
       <section><h3>3）リハビリに関する相談事</h3><p>${escapeMarkup(item.consultations)}</p></section>
@@ -134,6 +135,9 @@ function syncedTranscriptMarkup(value) {
 
 function stopSyncedVoice() {
   voicePlaybackStopped = true;
+  window.speechSynthesis?.cancel();
+  activeSpeechResolve?.();
+  activeSpeechResolve = null;
   if (activeVoiceAudio) {
     activeVoiceAudio.pause();
     if (typeof activeVoiceAudio.onended === 'function') activeVoiceAudio.onended();
@@ -163,14 +167,12 @@ async function playHistoryAudio(item) {
   playButton.disabled = true;
   stopButton.disabled = false;
   try {
-    let blob = null;
-    const serverResponse = await fetch(`/api/rehab-voice/sessions/${encodeURIComponent(item.id)}/audio`);
-    if (serverResponse.ok) blob = await serverResponse.blob();
-    if (!blob) blob = await loadRecordedAudio(item.id);
-    if (!blob) throw new Error('この履歴の録音音声が見つかりません。');
-    const objectUrl = URL.createObjectURL(blob);
+    const historyAudio = byId('rehabVoiceHistoryAudio');
     const lines = transcriptLines(item.transcript);
-    activeVoiceAudio = new Audio(objectUrl);
+    activeVoiceAudio = historyAudio;
+    historyAudio.hidden = false;
+    historyAudio.src = `/api/rehab-voice/sessions/${encodeURIComponent(item.id)}/audio`;
+    historyAudio.load();
     activeVoiceAudio.ontimeupdate = () => {
       if (!activeVoiceAudio.duration || !lines.length) return;
       highlightTranscriptLine(Math.min(lines.length - 1, Math.floor(activeVoiceAudio.currentTime / activeVoiceAudio.duration * lines.length)));
@@ -180,7 +182,6 @@ async function playHistoryAudio(item) {
       activeVoiceAudio.onerror = () => reject(new Error('録音音声を再生できませんでした。'));
       activeVoiceAudio.play().catch(reject);
     });
-    URL.revokeObjectURL(objectUrl);
   } catch (error) {
     status.textContent = error.message;
   } finally {
@@ -197,29 +198,24 @@ async function playSyncedVoice(value) {
   const playButton = byId('playRehabVoiceAi');
   const stopButton = byId('stopRehabVoiceAi');
   playButton.disabled = true;
-  playButton.textContent = 'AI音声を生成・再生中…';
+  playButton.textContent = '音声を再生中…';
   stopButton.disabled = false;
   try {
-    for (let index = 0; index < lines.length && !voicePlaybackStopped; index += 1) {
-      highlightTranscriptLine(index);
-      const rawLine = lines[index].replace(/^\[[^\]]+\]\s*/, '');
-      const speaker = rawLine.startsWith('患者：') ? 'patient' : 'therapist';
-      const spokenText = rawLine.replace(/^(患者|療法士)：/, '');
-      const response = await fetch('/api/rehab-voice/speech', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: spokenText, speaker }) });
-      if (!response.ok) {
-        const error = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
-        throw new Error(error.error || `HTTP ${response.status}`);
-      }
-      const objectUrl = URL.createObjectURL(await response.blob());
-      activeVoiceAudio = new Audio(objectUrl);
-      await new Promise((resolve, reject) => {
-        activeVoiceAudio.onended = resolve;
-        activeVoiceAudio.onerror = () => reject(new Error('AI音声を再生できませんでした'));
-        activeVoiceAudio.play().catch(reject);
+    if (!('speechSynthesis' in window) || !('SpeechSynthesisUtterance' in window)) throw new Error('この端末は音声読み上げに対応していません。');
+    await new Promise(resolve => {
+      activeSpeechResolve = resolve;
+      let remaining = lines.length;
+      lines.forEach((line, index) => {
+        const rawLine = line.replace(/^\[[^\]]+\]\s*/, '');
+        const utterance = new SpeechSynthesisUtterance(rawLine.replace(/^(患者|療法士)：/, ''));
+        utterance.lang = 'ja-JP';
+        utterance.rate = 0.95;
+        utterance.pitch = rawLine.startsWith('患者：') ? 1.05 : 0.9;
+        utterance.onstart = () => highlightTranscriptLine(index);
+        utterance.onend = utterance.onerror = () => { remaining -= 1; if (remaining === 0) { activeSpeechResolve = null; resolve(); } };
+        window.speechSynthesis.speak(utterance);
       });
-      URL.revokeObjectURL(objectUrl);
-      activeVoiceAudio = null;
-    }
+    });
   } catch (error) {
     status.textContent = error.message;
   } finally {
