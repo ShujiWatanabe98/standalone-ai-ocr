@@ -304,6 +304,10 @@ const dischargeTaskTemplates = [
   ['TOILETING','トイレ動作'],['TRANSFER','移乗'],['WALKING','歩行・移動'],['EATING','食事'],['COGNITION','認知・安全判断'],['MEDICATION','服薬管理'],['VOIDING','排尿・排便管理'],['SWALLOWING','嚥下・食形態'],
   ['HOME','住環境・段差'],['FAMILY','家族介護力'],['EQUIPMENT','福祉用具・装具'],['HOME_VISIT','退院前訪問'],['FAMILY_TRAINING','家族指導'],['SERVICES','介護保険・地域サービス'],
 ];
+const dischargeTaskSuggestions = {
+  TOILETING:['OT','-14'], TRANSFER:['PT','-14'], WALKING:['PT','-14'], EATING:['OT・ST','-14'], COGNITION:['OT・ST','-21'], MEDICATION:['看護・薬剤','-14'], VOIDING:['看護','-14'], SWALLOWING:['ST','-21'], HOME:['OT・MSW','-35'], FAMILY:['MSW','-28'], EQUIPMENT:['PT・OT','-21'], HOME_VISIT:['PT・OT・MSW','-28'], FAMILY_TRAINING:['多職種','-14'], SERVICES:['MSW','-21'],
+};
+function dateOffset(date, offsetDays) { return /^\d{4}-\d{2}-\d{2}$/.test(String(date || '')) ? new Date(new Date(`${date}T00:00:00Z`).getTime() + Number(offsetDays) * 86400000).toISOString().slice(0, 10) : ''; }
 function dischargeBoardSummary(tenantId, patientId) {
   const tasks = db.dischargeTasks.filter(task => task.tenantId === tenantId && task.patientId === patientId).sort((a, b) => a.order - b.order);
   const today = new Date().toISOString().slice(0, 10);
@@ -1644,15 +1648,32 @@ const server = http.createServer(async (req, res) => {
       }
       if (created) await persist(); return sendJson(res, 200, { created, ...dischargeBoardSummary(identity.tenantId, patient.id) });
     }
+    if (req.method === 'POST' && url.pathname === '/api/discharge-board/suggest-schedule') {
+      const body = await readJson(req); const patient = db.patients.find(item => item.tenantId === identity.tenantId && item.id === body.patientId);
+      if (!patient) return sendJson(res, 400, { error: '患者を選択してください' });
+      const profile = db.recoveryWardProfiles.find(item => item.tenantId === identity.tenantId && item.patientId === patient.id);
+      if (!profile?.plannedDischargeDate) return sendJson(res, 400, { error: '回復期病棟情報で退棟予定日を登録してください' });
+      const timestamp = now(); let changed = 0;
+      for (const task of db.dischargeTasks.filter(item => item.tenantId === identity.tenantId && item.patientId === patient.id)) {
+        const [ownerRole, offset] = dischargeTaskSuggestions[task.key] || ['', '']; let taskChanged = false;
+        if (!task.owner && ownerRole) { task.owner = ownerRole; task.ownerSource = 'PROPOSED'; taskChanged = true; }
+        if (!task.dueDate && offset) { task.dueDate = dateOffset(profile.plannedDischargeDate, offset); task.dueDateSource = 'PROPOSED'; taskChanged = true; }
+        if (taskChanged) { task.updatedAt = timestamp; task.scheduleBasis = `退棟予定日 ${profile.plannedDischargeDate}`; changed += 1; }
+      }
+      if (changed) await persist(); return sendJson(res, 200, { changed, plannedDischargeDate: profile.plannedDischargeDate, ...dischargeBoardSummary(identity.tenantId, patient.id) });
+    }
     if (req.method === 'PUT' && url.pathname === '/api/discharge-board') {
       const body = await readJson(req); const patient = db.patients.find(item => item.tenantId === identity.tenantId && item.id === body.patientId);
       if (!patient) return sendJson(res, 400, { error: '患者を選択してください' });
       const updates = Array.isArray(body.tasks) ? body.tasks.slice(0, dischargeTaskTemplates.length) : []; const timestamp = now();
       for (const update of updates) {
         const task = db.dischargeTasks.find(item => item.tenantId === identity.tenantId && item.patientId === patient.id && item.id === update.id); if (!task) continue;
+        const previousOwner = task.owner || ''; const previousDueDate = task.dueDate || '';
         task.revisions = Array.isArray(task.revisions) ? task.revisions : []; task.revisions.push({ at: timestamp, by: safeText(identity.hospitalName || identity.userId, 200), status: task.status, owner: task.owner, dueDate: task.dueDate, note: task.note });
         task.status = ['NOT_ASSESSED','BLOCKING','IN_PROGRESS','RESOLVED','NOT_APPLICABLE'].includes(update.status) ? update.status : task.status;
         task.priority = ['HIGH','MEDIUM','LOW'].includes(update.priority) ? update.priority : task.priority; task.owner = safeText(update.owner, 200); task.dueDate = /^\d{4}-\d{2}-\d{2}$/.test(String(update.dueDate || '')) ? update.dueDate : ''; task.note = safeText(update.note, 2000); task.updatedAt = timestamp;
+        if (task.owner && (task.owner !== previousOwner || task.ownerSource === 'PROPOSED')) task.ownerSource = 'USER_CONFIRMED';
+        if (task.dueDate && (task.dueDate !== previousDueDate || task.dueDateSource === 'PROPOSED')) task.dueDateSource = 'USER_CONFIRMED';
       }
       if (updates.length) await persist(); return sendJson(res, 200, dischargeBoardSummary(identity.tenantId, patient.id));
     }

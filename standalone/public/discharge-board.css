@@ -1,6 +1,6 @@
 .discharge-board{margin:18px 0;border:1px solid #9dcdb2;border-radius:10px;background:#fbfffc}
 .discharge-board>summary{padding:12px;cursor:pointer;color:#1f6841;font-weight:800}
-.discharge-board-toolbar{display:grid;grid-template-columns:minmax(180px,1fr) auto auto;gap:8px;padding:0 12px 12px}
+.discharge-board-toolbar{display:grid;grid-template-columns:minmax(180px,1fr) repeat(3,auto);gap:8px;padding:0 12px 12px}
 #dischargeBoardSummary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px;padding:0 12px 12px}
 #dischargeBoardSummary span{padding:8px;border-radius:8px;background:#eaf7ef;text-align:center;font-size:11px}
 #dischargeBoardSummary b{display:block;margin-top:3px;font-size:19px;color:#1f6841}
@@ -11,4 +11,5 @@
 .discharge-task-fields{display:grid;grid-template-columns:80px 1fr 145px 2fr;gap:6px;margin-top:7px}
 .discharge-task-fields input,.discharge-task-fields select{margin:0}
 #dischargeBoardMessage{padding:0 12px 12px}
+.discharge-proposal,.discharge-updated{display:block;margin-top:5px;color:#53675c;font-size:11px}.discharge-proposal{color:#8a5a00;font-weight:700}
 @media(max-width:760px){.discharge-board-toolbar{grid-template-columns:1fr}.discharge-board-toolbar button{width:100%}#dischargeBoardSummary{grid-template-columns:1fr 1fr}.discharge-task-title{align-items:stretch;flex-direction:column}.discharge-task-title select{width:100%}.discharge-task-fields{grid-template-columns:1fr 1fr}.discharge-task-fields input[name="note"]{grid-column:1/-1}}
