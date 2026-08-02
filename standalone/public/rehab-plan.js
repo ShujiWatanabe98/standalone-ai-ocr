@@ -34,6 +34,13 @@ function patientLabel(patient) { return `${patient.facilityPatientId}｜${patien
 function selectedPatientFromInput() { const query = planSearch.value.trim(); return planPatients.find(patient => query === patientLabel(patient) || query === patient.facilityPatientId || query === patient.name) || null; }
 function setPlanField(name, value, { overwrite = false } = {}) { const field = planForm.elements.namedItem(name); if (field && (overwrite || !field.value.trim())) field.value = value || ''; }
 function formObject() { return Object.fromEntries(new FormData(planForm).entries()); }
+function showPlanError(error) {
+  const message = error?.message || '処理に失敗しました。';
+  planStatus.textContent = '作成エラー';
+  planStatus.className = 'badge plan-status-error';
+  planMessage.textContent = message;
+  planById('rehabPlanEvidence').innerHTML = `<div class="plan-error"><strong>AI計画を作成できませんでした</strong><p>${planEsc(message)}</p><p>患者を選び直して、もう一度「AI計画を作成」を押してください。</p></div>`;
+}
 function resetPlanForm() {
   planForm.reset();
   planForm.elements.id.value = '';
@@ -61,6 +68,7 @@ async function loadPlanSource({ overwrite = false } = {}) {
   aiPlanButton.textContent = 'AIが作成中…';
   planStatus.textContent = 'AI作成中';
   planMessage.textContent = '評価OCR・経過記録・患者ボイス・前回計画を確認しています。';
+  planById('rehabPlanEvidence').innerHTML = '<div class="plan-generating"><strong>AI計画を作成しています</strong><p>患者データを確認しています。このままお待ちください（通常30秒～2分）。</p></div>';
   try {
     const generated = await planApi('/api/rehab-plans/generate', { method: 'POST', body: JSON.stringify({ patientId: selectedPlanPatient.id }) });
     for (const [name, value] of Object.entries(generated.plan || {})) setPlanField(name, value, { overwrite: true });
@@ -109,7 +117,7 @@ async function initializePlans() {
   resetPlanForm();
 }
 planSearch.addEventListener('change', async () => { selectedPlanPatient = selectedPatientFromInput(); resetPlanForm(); try { await refreshPlanHistory(); } catch (error) { planMessage.textContent = error.message; } });
-planById('rehabPlanLoadSource').addEventListener('click', () => loadPlanSource({ overwrite: false }).catch(error => { planMessage.textContent = error.message; }));
+planById('rehabPlanLoadSource').addEventListener('click', () => loadPlanSource({ overwrite: false }).catch(showPlanError));
 planById('rehabPlanCopyPrevious').addEventListener('click', async () => { try { selectedPlanPatient = selectedPatientFromInput(); await refreshPlanHistory(); if (!patientPlans.length) throw new Error('コピーできる前回計画がありません。'); const previous = patientPlans[0]; resetPlanForm(); populatePlan({ ...previous, id: '', version: Number(previous.version) + 1, status: 'DRAFT', planType: 'REASSESSMENT', evaluationDate: localDate(), updatedAt: new Date().toISOString() }); planForm.elements.id.value = ''; planStatus.textContent = '前回コピー・未保存'; } catch (error) { planMessage.textContent = error.message; } });
 planById('rehabPlanNew').addEventListener('click', resetPlanForm);
 planById('rehabPlanSaveDraft').addEventListener('click', () => savePlan('DRAFT').catch(error => { planMessage.textContent = error.message; }));
