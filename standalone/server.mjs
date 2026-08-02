@@ -312,7 +312,8 @@ function dischargeBoardSummary(tenantId, patientId) {
   const tasks = db.dischargeTasks.filter(task => task.tenantId === tenantId && task.patientId === patientId).sort((a, b) => a.order - b.order);
   const today = new Date().toISOString().slice(0, 10);
   const active = tasks.filter(task => !['RESOLVED','NOT_APPLICABLE'].includes(task.status));
-  return { tasks, total: tasks.length, blocking: tasks.filter(task => task.status === 'BLOCKING').length, inProgress: tasks.filter(task => task.status === 'IN_PROGRESS').length, resolved: tasks.filter(task => task.status === 'RESOLVED').length, unassessed: tasks.filter(task => task.status === 'NOT_ASSESSED').length, overdue: active.filter(task => task.dueDate && task.dueDate < today).length, ownerMissing: active.filter(task => !task.owner).length, readiness: tasks.length ? Math.round(tasks.filter(task => ['RESOLVED','NOT_APPLICABLE'].includes(task.status)).length / tasks.length * 100) : 0 };
+  const tracked = tasks.filter(task => ['RESOLVED','NOT_APPLICABLE'].includes(task.status) || (task.status !== 'NOT_ASSESSED' && task.owner && task.dueDate));
+  return { tasks, total: tasks.length, blocking: tasks.filter(task => task.status === 'BLOCKING').length, inProgress: tasks.filter(task => task.status === 'IN_PROGRESS').length, resolved: tasks.filter(task => task.status === 'RESOLVED').length, unassessed: tasks.filter(task => task.status === 'NOT_ASSESSED').length, overdue: active.filter(task => task.dueDate && task.dueDate < today).length, ownerMissing: active.filter(task => !task.owner).length, readiness: tasks.length ? Math.round(tasks.filter(task => ['RESOLVED','NOT_APPLICABLE'].includes(task.status)).length / tasks.length * 100) : 0, tracked: tracked.length, untracked: tasks.length - tracked.length, trackingRate: tasks.length ? Math.round(tracked.length / tasks.length * 100) : 0 };
 }
 
 function rehabPlanSource(patient, tenantId) {

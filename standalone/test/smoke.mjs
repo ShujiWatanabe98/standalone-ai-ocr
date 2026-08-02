@@ -432,12 +432,16 @@ const homeVisitTask = dischargeSuggested.tasks.find(task => task.key === 'HOME_V
 assert.equal(homeVisitTask.owner, 'PT・OT・MSW');
 assert.equal(homeVisitTask.dueDate, '2026-11-02');
 assert.equal(homeVisitTask.ownerSource, 'PROPOSED');
+assert.equal(dischargeSuggested.trackingRate, 0);
+assert.equal(dischargeSuggested.untracked, 14);
 const toiletingTask = dischargeSuggested.tasks.find(task => task.key === 'TOILETING');
 const dischargeUpdateResponse = await fetch(`${base}/api/discharge-board`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: auth }, body: JSON.stringify({ patientId: patient.id, tasks: [{ id: toiletingTask.id, status: 'BLOCKING', priority: 'HIGH', owner: 'OT', dueDate: '2026-08-20', note: '夜間動作確認' }] }) });
 assert.equal(dischargeUpdateResponse.status, 200);
 const dischargeBoard = await dischargeUpdateResponse.json();
 assert.equal(dischargeBoard.blocking, 1);
 assert.equal(dischargeBoard.ownerMissing, 0);
+assert.equal(dischargeBoard.trackingRate, 7);
+assert.equal(dischargeBoard.tracked, 1);
 assert.equal(dischargeBoard.tasks.find(task => task.key === 'TOILETING').ownerSource, 'USER_CONFIRMED');
 const fimExportResponse = await fetch(`${base}/api/fim-export.csv`, { headers: { Authorization: auth } });
 assert.equal(fimExportResponse.status, 200);
