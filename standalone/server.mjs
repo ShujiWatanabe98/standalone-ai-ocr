@@ -46,7 +46,7 @@ const allowedImageTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const databaseUrl = process.env.DATABASE_URL || '';
 const sqlPool = databaseUrl ? new pg.Pool({ connectionString: databaseUrl }) : null;
 
-let db = { version: 19, hospitals: [], patients: [], therapists: [], jobs: [], rehabRecords: [], rehabVoiceSessions: [], rehabPlans: [], rehabPlanContexts: [], outcomeGoals: [], outcomeSnapshots: [], outcomeActions: [], fimAssessments: [], recoveryWardProfiles: [], dischargeTasks: [], conferences: [], warningReviews: [], integrationRuns: [], clinicalEvents: [], pilotTimeMeasurements: [] };
+let db = { version: 20, hospitals: [], patients: [], therapists: [], jobs: [], rehabRecords: [], rehabVoiceSessions: [], rehabPlans: [], rehabPlanContexts: [], outcomeGoals: [], outcomeSnapshots: [], outcomeActions: [], fimAssessments: [], recoveryWardProfiles: [], dischargeTasks: [], conferences: [], warningReviews: [], integrationRuns: [], clinicalEvents: [], pilotTimeMeasurements: [], pilotSafetyEvents: [] };
 let writeChain = Promise.resolve();
 
 if (!['127.0.0.1', 'localhost', '::1'].includes(host) && (!authUser || !authPassword || !encryptionKey)) {
@@ -99,7 +99,8 @@ if (!Array.isArray(db.warningReviews)) db.warningReviews = [];
 if (!Array.isArray(db.integrationRuns)) db.integrationRuns = [];
 if (!Array.isArray(db.clinicalEvents)) db.clinicalEvents = [];
 if (!Array.isArray(db.pilotTimeMeasurements)) db.pilotTimeMeasurements = [];
-db.version = Math.max(Number(db.version) || 0, 19);
+if (!Array.isArray(db.pilotSafetyEvents)) db.pilotSafetyEvents = [];
+db.version = Math.max(Number(db.version) || 0, 20);
 const outcomeGoalTemplates = [
   { key: 'homeReturnRate', label: '在宅復帰率', unit: '%', publicBaseline: 83, proposedTarget: 85, direction: 'UP', sourceLabel: '西大和リハビリテーション病院 公開実績', sourceUrl: 'https://www.nishiyamato.net/reason/' },
   { key: 'fimGain', label: 'FIM改善', unit: '点', publicBaseline: 27.6, proposedTarget: 30, direction: 'UP', sourceLabel: '西大和リハビリテーション病院 公開実績', sourceUrl: 'https://www.nishiyamato.net/reason/' },
@@ -1680,6 +1681,22 @@ const server = http.createServer(async (req, res) => {
       const item={id:id('pilot-time'),tenantId:identity.tenantId,phase,workflow,measuredAt,minutes:Math.round(minutes*10)/10,cases,minutesPerCase:Math.round(minutes/cases*10)/10,staffRole:safeText(body.staffRole,100),note:safeText(body.note,1000),createdAt:now(),createdBy:safeText(identity.hospitalName||identity.userId,200)};
       db.pilotTimeMeasurements.push(item); await persist(); return sendJson(res,201,item);
     }
+    if (req.method === 'GET' && url.pathname === '/api/pilot/safety-summary') {
+      const events=db.pilotSafetyEvents.filter(item=>item.tenantId===identity.tenantId).sort((a,b)=>String(b.occurredAt).localeCompare(String(a.occurredAt)));
+      const serious=events.filter(item=>item.severity==='SERIOUS'); const open=events.filter(item=>item.status==='OPEN');
+      return sendJson(res,200,{events:events.slice(0,100),counts:{total:events.length,serious:serious.length,open:open.length,patientMismatch:events.filter(item=>item.category==='PATIENT_MISMATCH').length,aiProposal:events.filter(item=>item.category==='AI_PROPOSAL').length,nearMiss:events.filter(item=>item.category==='NEAR_MISS').length},gate:{label:'重大事故0件',status:serious.length===0?'MET':'NOT_MET'},note:'安全事象は個人を責めるためではなく、再発防止と実証継続判断のために記録します。重大事象が1件でもある場合は試行を停止し、責任者が原因と対策を確認してください。'});
+    }
+    if (req.method === 'POST' && url.pathname === '/api/pilot/safety-events') {
+      const body=await readJson(req);const category=String(body.category||'').toUpperCase(),severity=String(body.severity||'').toUpperCase(),occurredAt=String(body.occurredAt||'');
+      if(!['NEAR_MISS','PATIENT_MISMATCH','AI_PROPOSAL','SYSTEM','OTHER'].includes(category))return sendJson(res,400,{error:'安全事象の種別を選択してください'});
+      if(!['LOW','MEDIUM','SERIOUS'].includes(severity))return sendJson(res,400,{error:'重大度を選択してください'});
+      if(!/^\d{4}-\d{2}-\d{2}$/.test(occurredAt))return sendJson(res,400,{error:'発生日を入力してください'});
+      const description=safeText(body.description,2000);if(!description)return sendJson(res,400,{error:'事象内容は必須です'});
+      const item={id:id('pilot-safety'),tenantId:identity.tenantId,category,severity,occurredAt,description,immediateAction:safeText(body.immediateAction,2000),status:'OPEN',createdAt:now(),createdBy:safeText(identity.hospitalName||identity.userId,200)};
+      db.pilotSafetyEvents.push(item);await persist();return sendJson(res,201,item);
+    }
+    const pilotSafetyMatch=/^\/api\/pilot\/safety-events\/([^/]+)$/.exec(url.pathname);
+    if(req.method==='PUT'&&pilotSafetyMatch){const item=db.pilotSafetyEvents.find(entry=>entry.tenantId===identity.tenantId&&entry.id===pilotSafetyMatch[1]);if(!item)return sendJson(res,404,{error:'安全事象が見つかりません'});const body=await readJson(req);if(body.status!=='RESOLVED')return sendJson(res,400,{error:'解決済みへの変更だけ実行できます'});const resolution=safeText(body.resolution,2000);if(!resolution)return sendJson(res,400,{error:'原因と再発防止策を入力してください'});item.status='RESOLVED';item.resolution=resolution;item.resolvedAt=now();item.resolvedBy=safeText(identity.hospitalName||identity.userId,200);await persist();return sendJson(res,200,item);}
     if (req.method === 'GET' && url.pathname === '/api/therapists') {
       return sendJson(res, 200, db.therapists
         .filter(therapist => therapist.tenantId === identity.tenantId)
