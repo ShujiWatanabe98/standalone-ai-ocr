@@ -135,6 +135,22 @@ for (const tenantId of new Set([facilityId, ...db.hospitals.filter(hospital => h
   }
 }
 if (seededRehabVoicePatients) await persist();
+const rehabAiPlanPatientSeeds = [
+  ['RAP001', 'リハビリAI計画 TEST患者1', '1949-03-08'],
+  ['RAP002', 'リハビリAI計画 TEST患者2', '1958-07-19'],
+  ['RAP003', 'リハビリAI計画 TEST患者3', '1967-11-24'],
+];
+let seededRehabAiPlanPatients = 0;
+const rehabAiPlanTenantIds = new Set([facilityId, ...db.hospitals.filter(hospital => hospital.active !== false).map(hospital => hospital.id)]);
+for (const tenantId of rehabAiPlanTenantIds) {
+  for (const [facilityPatientId, name, birthDate] of rehabAiPlanPatientSeeds) {
+    if (db.patients.some(patient => patient.tenantId === tenantId && patient.facilityPatientId === facilityPatientId)) continue;
+    const timestamp = now();
+    db.patients.push({ id: id('patient'), tenantId, facilityPatientId, name, birthDate, createdAt: timestamp, updatedAt: timestamp, testDataType: 'REHAB_AI_PLAN' });
+    seededRehabAiPlanPatients += 1;
+  }
+}
+if (seededRehabAiPlanPatients) await persist();
 let migratedTherapistIds = 0;
 const knownTherapistIds = new Map([['田中 陽介', 'PT001'], ['山本 奈緒', 'OT001'], ['伊藤 拓海', 'ST001']]);
 for (const therapist of db.therapists) {
@@ -1448,7 +1464,7 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || `${host}:${port}`}`);
   try {
     if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && !sameOrigin(req)) return sendJson(res, 403, { error: '不正な送信元です' });
-    if (req.method === 'GET' && url.pathname === '/api/health') return sendJson(res, 200, { ok: true, product: 'Standalone AI OCR', release: '2026-08-02-rehab-plan-under-therapists-1', model, reasoningEffort, retryReasoningEffort, imageDetail, apiKeyConfigured: Boolean(process.env.OPENAI_API_KEY) });
+    if (req.method === 'GET' && url.pathname === '/api/health') return sendJson(res, 200, { ok: true, product: 'Standalone AI OCR', release: '2026-08-02-rap-patient-seed-1', model, reasoningEffort, retryReasoningEffort, imageDetail, apiKeyConfigured: Boolean(process.env.OPENAI_API_KEY), rehabAiPlanTestData: { facilityPatientIds: rehabAiPlanPatientSeeds.map(([facilityPatientId]) => facilityPatientId), tenantsReady: [...rehabAiPlanTenantIds].filter(tenantId => rehabAiPlanPatientSeeds.every(([facilityPatientId]) => db.patients.some(patient => patient.tenantId === tenantId && patient.facilityPatientId === facilityPatientId))).length } });
     if (req.method === 'POST' && url.pathname === '/api/auth/login') {
       if ((!authUser || !authPassword) && db.hospitals.length === 0) return sendJson(res, 200, { ok: true, userId: 'local-user', tenantId: facilityId, role: 'ADMIN', redirect: '/admin.html' });
       if (loginRateLimited(req)) return sendJson(res, 429, { error: 'ログイン失敗が多すぎます。15分後に再試行してください' });
