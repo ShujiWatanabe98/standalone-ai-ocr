@@ -46,7 +46,7 @@ const allowedImageTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const databaseUrl = process.env.DATABASE_URL || '';
 const sqlPool = databaseUrl ? new pg.Pool({ connectionString: databaseUrl }) : null;
 
-let db = { version: 21, hospitals: [], patients: [], therapists: [], jobs: [], rehabRecords: [], rehabVoiceSessions: [], rehabPlans: [], rehabPlanContexts: [], outcomeGoals: [], outcomeSnapshots: [], outcomeActions: [], fimAssessments: [], recoveryWardProfiles: [], dischargeTasks: [], conferences: [], warningReviews: [], integrationRuns: [], clinicalEvents: [], pilotTimeMeasurements: [], pilotSafetyEvents: [], pilotStaffFeedback: [] };
+let db = { version: 22, hospitals: [], patients: [], therapists: [], jobs: [], rehabRecords: [], rehabVoiceSessions: [], rehabPlans: [], rehabPlanContexts: [], outcomeGoals: [], outcomeSnapshots: [], outcomeActions: [], fimAssessments: [], recoveryWardProfiles: [], dischargeTasks: [], conferences: [], warningReviews: [], integrationRuns: [], clinicalEvents: [], pilotTimeMeasurements: [], pilotSafetyEvents: [], pilotStaffFeedback: [], pilotStudies: [] };
 let writeChain = Promise.resolve();
 
 if (!['127.0.0.1', 'localhost', '::1'].includes(host) && (!authUser || !authPassword || !encryptionKey)) {
@@ -101,7 +101,8 @@ if (!Array.isArray(db.clinicalEvents)) db.clinicalEvents = [];
 if (!Array.isArray(db.pilotTimeMeasurements)) db.pilotTimeMeasurements = [];
 if (!Array.isArray(db.pilotSafetyEvents)) db.pilotSafetyEvents = [];
 if (!Array.isArray(db.pilotStaffFeedback)) db.pilotStaffFeedback = [];
-db.version = Math.max(Number(db.version) || 0, 21);
+if (!Array.isArray(db.pilotStudies)) db.pilotStudies = [];
+db.version = Math.max(Number(db.version) || 0, 22);
 const outcomeGoalTemplates = [
   { key: 'homeReturnRate', label: '在宅復帰率', unit: '%', publicBaseline: 83, proposedTarget: 85, direction: 'UP', sourceLabel: '西大和リハビリテーション病院 公開実績', sourceUrl: 'https://www.nishiyamato.net/reason/' },
   { key: 'fimGain', label: 'FIM改善', unit: '点', publicBaseline: 27.6, proposedTarget: 30, direction: 'UP', sourceLabel: '西大和リハビリテーション病院 公開実績', sourceUrl: 'https://www.nishiyamato.net/reason/' },
@@ -1713,6 +1714,12 @@ const server = http.createServer(async (req, res) => {
       const gates=[{key:'TIME',label:'主要業務時間30％以上削減',status:bestReduction==null?'MORE_DATA':bestReduction>=30?'MET':'NOT_MET',value:bestReduction==null?'未比較':`${bestReduction}%`,evidence:`比較可能 ${reductions.length}業務`},{key:'SAFETY',label:'重大事故0件・未解決0件',status:serious===0&&open===0?'MET':'STOP',value:`重大${serious}件・未解決${open}件`,evidence:`安全事象 ${safety.length}件`},{key:'AGREEMENT',label:'回答3人以上・継続意向80％以上',status:feedback.length<3?'MORE_DATA':agreementRate>=80?'MET':'NOT_MET',value:`${agreementRate}%`,evidence:`回答 ${feedback.length}人`}];
       const status=gates.some(item=>item.status==='STOP')?'STOP':gates.every(item=>item.status==='MET')?'READY':gates.some(item=>item.status==='NOT_MET')?'NOT_READY':'MORE_DATA';const labels={READY:'本導入候補',STOP:'試行停止・安全確認',NOT_READY:'改善後に再評価',MORE_DATA:'実証データ不足'};
       return sendJson(res,200,{status,label:labels[status],gates,decisionNote:status==='READY'?'システム内の定量条件は満たしています。病院の責任者、情報管理部門、現場代表が結果と対象範囲を確認して最終承認してください。':status==='STOP'?'安全確認と再発防止策の承認が完了するまで試行を再開しないでください。':'不足データまたは未達項目を確認し、対象業務と試行条件を揃えて再測定してください。',limitations:'この判定は登録済み実証データに基づく支援情報であり、病院の正式な導入承認を代替しません。'});
+    }
+    if(req.method==='GET'&&url.pathname==='/api/pilot/study'){
+      const study=db.pilotStudies.find(item=>item.tenantId===identity.tenantId)||null; if(!study)return sendJson(res,200,{study:null,phase:'NOT_CONFIGURED',progress:0,message:'対象病棟、責任者、期間を設定してください。'}); const today=now().slice(0,10); let phase='PLANNED',progress=0,message='実証開始前です。'; if(today>=study.baselineStart&&today<=study.baselineEnd){phase='BASELINE';message='導入前の現状時間を測定中です。';}else if(today>study.baselineEnd&&today<study.trialStart){phase='SAFETY_CHECK';message='匿名・テストデータによる安全確認期間です。';}else if(today>=study.trialStart&&today<=study.trialEnd){phase='TRIAL';message='限定患者で試行中です。';}else if(today>study.trialEnd){phase='EVALUATION';message='効果、安全性、操作負荷を評価してください。';} const start=new Date(`${study.baselineStart}T00:00:00Z`),end=new Date(`${study.trialEnd}T00:00:00Z`),current=new Date(`${today}T00:00:00Z`); if(current>=start)progress=Math.max(0,Math.min(100,Math.round((current-start)/(end-start)*100))); return sendJson(res,200,{study,phase,progress,message});
+    }
+    if(req.method==='PUT'&&url.pathname==='/api/pilot/study'){
+      const body=await readJson(req);const wardName=safeText(body.wardName,200),owner=safeText(body.owner,200),baselineStart=String(body.baselineStart||''),baselineEnd=String(body.baselineEnd||''),trialStart=String(body.trialStart||''),trialEnd=String(body.trialEnd||''),patientLimit=Number(body.patientLimit);const dates=[baselineStart,baselineEnd,trialStart,trialEnd];if(!wardName||!owner)return sendJson(res,400,{error:'対象病棟と実証責任者は必須です'});if(dates.some(value=>!/^\d{4}-\d{2}-\d{2}$/.test(value)))return sendJson(res,400,{error:'すべての期間を入力してください'});if(!(baselineStart<=baselineEnd&&baselineEnd<trialStart&&trialStart<=trialEnd))return sendJson(res,400,{error:'導入前測定、安全確認、試行の順になるよう期間を設定してください'});if(!Number.isInteger(patientLimit)||patientLimit<1||patientLimit>500)return sendJson(res,400,{error:'患者上限は1～500人で入力してください'});const existing=db.pilotStudies.find(item=>item.tenantId===identity.tenantId),timestamp=now();if(existing){Object.assign(existing,{wardName,owner,baselineStart,baselineEnd,trialStart,trialEnd,patientLimit,note:safeText(body.note,2000),updatedAt:timestamp,updatedBy:safeText(identity.hospitalName||identity.userId,200)});await persist();return sendJson(res,200,existing);}const study={id:id('pilot-study'),tenantId:identity.tenantId,wardName,owner,baselineStart,baselineEnd,trialStart,trialEnd,patientLimit,note:safeText(body.note,2000),createdAt:timestamp,updatedAt:timestamp,updatedBy:safeText(identity.hospitalName||identity.userId,200)};db.pilotStudies.push(study);await persist();return sendJson(res,201,study);
     }
     if (req.method === 'GET' && url.pathname === '/api/therapists') {
       return sendJson(res, 200, db.therapists
