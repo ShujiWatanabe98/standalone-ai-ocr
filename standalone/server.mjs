@@ -46,7 +46,7 @@ const allowedImageTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const databaseUrl = process.env.DATABASE_URL || '';
 const sqlPool = databaseUrl ? new pg.Pool({ connectionString: databaseUrl }) : null;
 
-let db = { version: 9, hospitals: [], patients: [], therapists: [], jobs: [], rehabRecords: [], rehabVoiceSessions: [], rehabPlans: [], rehabPlanContexts: [] };
+let db = { version: 10, hospitals: [], patients: [], therapists: [], jobs: [], rehabRecords: [], rehabVoiceSessions: [], rehabPlans: [], rehabPlanContexts: [], outcomeGoals: [], outcomeSnapshots: [], outcomeActions: [] };
 let writeChain = Promise.resolve();
 
 if (!['127.0.0.1', 'localhost', '::1'].includes(host) && (!authUser || !authPassword || !encryptionKey)) {
@@ -88,7 +88,26 @@ if (!Array.isArray(db.rehabRecords)) db.rehabRecords = [];
 if (!Array.isArray(db.rehabVoiceSessions)) db.rehabVoiceSessions = [];
 if (!Array.isArray(db.rehabPlans)) db.rehabPlans = [];
 if (!Array.isArray(db.rehabPlanContexts)) db.rehabPlanContexts = [];
-db.version = Math.max(Number(db.version) || 0, 9);
+if (!Array.isArray(db.outcomeGoals)) db.outcomeGoals = [];
+if (!Array.isArray(db.outcomeSnapshots)) db.outcomeSnapshots = [];
+if (!Array.isArray(db.outcomeActions)) db.outcomeActions = [];
+db.version = Math.max(Number(db.version) || 0, 10);
+const outcomeGoalTemplates = [
+  { key: 'homeReturnRate', label: '在宅復帰率', unit: '%', publicBaseline: 83, proposedTarget: 85, direction: 'UP', sourceLabel: '西大和リハビリテーション病院 公開実績', sourceUrl: 'https://www.nishiyamato.net/reason/' },
+  { key: 'fimGain', label: 'FIM改善', unit: '点', publicBaseline: 27.6, proposedTarget: 30, direction: 'UP', sourceLabel: '西大和リハビリテーション病院 公開実績', sourceUrl: 'https://www.nishiyamato.net/reason/' },
+  { key: 'performanceIndex', label: '回復期リハ実績指数', unit: '', publicBaseline: 47.6, proposedTarget: 50, direction: 'UP', sourceLabel: '西大和リハビリテーション病院 2026年1月～6月公開値', sourceUrl: 'https://www.nishiyamato.net/%E5%9B%9E%E5%BE%A9%E6%9C%9F%E3%83%AA%E3%83%8F%E3%83%93%E3%83%AA%E3%83%86%E3%83%BC%E3%82%B7%E3%83%A7%E3%83%B3%E7%97%85%E6%A3%9F%E5%AE%9F%E7%B8%BE%E6%8C%87%E6%95%B0/' },
+  { key: 'planConfirmationRate', label: 'AI計画期限内確定率', unit: '%', publicBaseline: null, proposedTarget: 95, direction: 'UP', sourceLabel: '導入時の仮目標', sourceUrl: '' },
+  { key: 'dataCompletionRate', label: '必須データ充足率', unit: '%', publicBaseline: null, proposedTarget: 95, direction: 'UP', sourceLabel: '導入時の仮目標', sourceUrl: '' },
+];
+let seededOutcomeGoals = 0;
+for (const tenantId of new Set([facilityId, ...db.hospitals.filter(hospital => hospital.active !== false).map(hospital => hospital.id)])) {
+  for (const template of outcomeGoalTemplates) {
+    if (db.outcomeGoals.some(goal => goal.tenantId === tenantId && goal.key === template.key)) continue;
+    db.outcomeGoals.push({ id: id('outcome-goal'), tenantId, ...template, target: template.proposedTarget, targetType: 'PROPOSED', active: true, createdAt: now(), updatedAt: now() });
+    seededOutcomeGoals += 1;
+  }
+}
+if (seededOutcomeGoals) await persist();
 let seededRehabVoicePatients = 0;
 for (const tenantId of new Set([facilityId, ...db.hospitals.filter(hospital => hospital.active !== false).map(hospital => hospital.id)])) {
   for (const [facilityPatientId, name, birthDate] of [
@@ -1480,6 +1499,21 @@ const server = http.createServer(async (req, res) => {
           hasDischargeIssue: Boolean(context && (!context.dischargeDestination || context.unresolvedQuestions || context.risks)),
         };
       }).sort((a, b) => (b.reviewComments - a.reviewComments) || a.facilityPatientId.localeCompare(b.facilityPatientId));
+      const confirmedCount = patientRows.filter(row => row.planStatus === 'CONFIRMED').length;
+      const contexts = db.rehabPlanContexts.filter(context => context.tenantId === identity.tenantId);
+      const requiredContextFields = ['diagnosis', 'medicalRestrictions', 'preHospitalLife', 'currentAdl', 'homeEnvironment', 'familySupport', 'patientGoals', 'dischargeDestination'];
+      const completedFields = contexts.reduce((sum, context) => sum + requiredContextFields.filter(key => String(context[key] || '').trim()).length, 0);
+      const derivedValues = {
+        planConfirmationRate: patientRows.length ? Math.round(confirmedCount / patientRows.length * 1000) / 10 : 0,
+        dataCompletionRate: patientRows.length ? Math.round(completedFields / (patientRows.length * requiredContextFields.length) * 1000) / 10 : 0,
+      };
+      const latestSnapshot = db.outcomeSnapshots.filter(snapshot => snapshot.tenantId === identity.tenantId).sort((a, b) => b.period.localeCompare(a.period))[0] || null;
+      const goals = db.outcomeGoals.filter(goal => goal.tenantId === identity.tenantId && goal.active !== false).map(goal => ({
+        ...goal,
+        current: Number.isFinite(Number(latestSnapshot?.values?.[goal.key])) ? Number(latestSnapshot.values[goal.key]) : (derivedValues[goal.key] ?? goal.publicBaseline),
+        currentSource: Number.isFinite(Number(latestSnapshot?.values?.[goal.key])) ? 'HOSPITAL_SNAPSHOT' : (derivedValues[goal.key] != null ? 'LIVE_SYSTEM' : 'PUBLIC_BASELINE'),
+      }));
+      const actions = db.outcomeActions.filter(action => action.tenantId === identity.tenantId && action.status !== 'DONE').sort((a, b) => String(a.dueDate || '9999').localeCompare(String(b.dueDate || '9999')));
       return sendJson(res, 200, {
         updatedAt: now(),
         summary: {
@@ -1488,8 +1522,46 @@ const server = http.createServer(async (req, res) => {
           planReviewCount: patientRows.filter(row => row.planStatus !== 'CONFIRMED' || row.reviewComments > 0).length,
           dischargeIssueCount: patientRows.filter(row => row.hasDischargeIssue).length,
         },
-        patients: patientRows,
+        goals, latestSnapshot, actions, patients: patientRows,
       });
+    }
+    if (req.method === 'PUT' && url.pathname === '/api/outcome-goals') {
+      const body = await readJson(req);
+      const goal = db.outcomeGoals.find(item => item.tenantId === identity.tenantId && item.key === safeText(body.key, 80));
+      const target = Number(body.target);
+      if (!goal || !Number.isFinite(target) || target < 0 || target > 1000) return sendJson(res, 400, { error: '目標値を確認してください' });
+      goal.target = target; goal.targetType = 'HOSPITAL_DEFINED'; goal.updatedAt = now(); goal.updatedBy = safeText(identity.hospitalName || identity.userId, 200);
+      await persist();
+      return sendJson(res, 200, goal);
+    }
+    if (req.method === 'POST' && url.pathname === '/api/outcome-snapshots') {
+      const body = await readJson(req);
+      const period = /^\d{4}-\d{2}$/.test(String(body.period || '')) ? body.period : '';
+      if (!period) return sendJson(res, 400, { error: '集計月を入力してください' });
+      const values = Object.fromEntries(outcomeGoalTemplates.flatMap(template => {
+        const value = Number(body.values?.[template.key]);
+        return Number.isFinite(value) && value >= 0 ? [[template.key, value]] : [];
+      }));
+      let snapshot = db.outcomeSnapshots.find(item => item.tenantId === identity.tenantId && item.period === period);
+      if (!snapshot) { snapshot = { id: id('outcome-snapshot'), tenantId: identity.tenantId, period, createdAt: now() }; db.outcomeSnapshots.push(snapshot); }
+      Object.assign(snapshot, { values, note: safeText(body.note, 2000), dataType: body.dataType === 'SAMPLE' ? 'SAMPLE' : 'HOSPITAL_ACTUAL', updatedAt: now(), updatedBy: safeText(identity.hospitalName || identity.userId, 200) });
+      await persist();
+      return sendJson(res, 200, snapshot);
+    }
+    if (req.method === 'POST' && url.pathname === '/api/outcome-actions') {
+      const body = await readJson(req);
+      const patient = db.patients.find(item => item.tenantId === identity.tenantId && item.id === body.patientId);
+      const title = safeText(body.title, 500);
+      if (!patient || !title) return sendJson(res, 400, { error: '患者と対応内容を入力してください' });
+      const timestamp = now();
+      const action = { id: id('outcome-action'), tenantId: identity.tenantId, patientId: patient.id, patientLabel: `${patient.facilityPatientId}｜${patient.name}`, title, owner: safeText(body.owner, 200), dueDate: /^\d{4}-\d{2}-\d{2}$/.test(String(body.dueDate || '')) ? body.dueDate : '', category: ['FIM','PLAN','DISCHARGE','FAMILY','RISK','OTHER'].includes(body.category) ? body.category : 'OTHER', status: 'OPEN', createdAt: timestamp, updatedAt: timestamp };
+      db.outcomeActions.push(action); await persist(); return sendJson(res, 201, action);
+    }
+    const outcomeActionMatch = /^\/api\/outcome-actions\/([^/]+)$/.exec(url.pathname);
+    if (req.method === 'PUT' && outcomeActionMatch) {
+      const action = db.outcomeActions.find(item => item.tenantId === identity.tenantId && item.id === outcomeActionMatch[1]);
+      if (!action) return sendJson(res, 404, { error: '対応項目が見つかりません' });
+      const body = await readJson(req); action.status = body.status === 'DONE' ? 'DONE' : 'OPEN'; action.completedAt = action.status === 'DONE' ? now() : null; action.updatedAt = now(); await persist(); return sendJson(res, 200, action);
     }
     if (req.method === 'GET' && url.pathname === '/api/rehab-plan-context') {
       const patientId = safeText(url.searchParams.get('patientId'));
