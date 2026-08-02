@@ -210,9 +210,58 @@ function normalizedRehabPlan(body, previous = {}) {
     nursingApproach: text('nursingApproach'), socialApproach: text('socialApproach'),
     nutritionAndOral: text('nutritionAndOral'), riskManagement: text('riskManagement'),
     explanation: text('explanation'), evidence: text('evidence', 12000),
+    aiReviewComments: text('aiReviewComments', 12000), therapistReviewComments: text('therapistReviewComments', 12000),
     doctorName: text('doctorName', 200), nurseName: text('nurseName', 200),
     ptName: text('ptName', 200), otName: text('otName', 200), stName: text('stName', 200), socialWorkerName: text('socialWorkerName', 200),
   };
+}
+
+function rehabPlanSource(patient, tenantId) {
+  const jobs = db.jobs.filter(job => job.tenantId === tenantId && job.patientId === patient.id && job.result).sort((a, b) => jobClinicalSortKey(b).localeCompare(jobClinicalSortKey(a)));
+  const records = db.rehabRecords.filter(record => record.tenantId === tenantId && record.patientId === patient.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const voices = db.rehabVoiceSessions.filter(session => session.tenantId === tenantId && session.patientId === patient.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const previousPlans = db.rehabPlans.filter(plan => plan.tenantId === tenantId && plan.patientId === patient.id).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  const latestEvaluation = jobs[0] || null;
+  const result = latestEvaluation ? (latestEvaluation.confirmedResult || latestEvaluation.result) : null;
+  return {
+    patient: publicPatient(patient, tenantId),
+    latestRecord: records[0] ? publicRehabRecord(records[0]) : null,
+    latestVoice: voices[0] ? { ...voices[0], hasAudio: Boolean(voices[0].hasAudio) } : null,
+    latestEvaluation: latestEvaluation ? { id: latestEvaluation.id, documentType: result?.documentType || latestEvaluation.evaluationType || '', evaluationDate: jobEvaluationDate(latestEvaluation), notes: result?.notes || '', fields: (result?.fields || []).slice(0, 120).map(field => ({ label: safeText(field.label, 300), value: safeText(field.value, 1000) })) } : null,
+    evaluations: jobs.slice(0, 8).map(job => ({ documentType: job.confirmedResult?.documentType || job.result?.documentType || job.evaluationType || '', evaluationDate: jobEvaluationDate(job), confirmed: Boolean(job.confirmedResult), notes: safeText((job.confirmedResult || job.result)?.notes, 2000), fields: ((job.confirmedResult || job.result)?.fields || []).filter(field => String(field.value ?? '').trim()).slice(0, 80).map(field => ({ label: safeText(field.label, 200), value: safeText(field.value, 600) })) })),
+    records: records.slice(0, 10).map(publicRehabRecord),
+    voices: voices.slice(0, 10).map(session => ({ createdAt: session.createdAt, patientLog: safeText(session.patientLog, 3000), concerns: safeText(session.concerns, 3000), consultations: safeText(session.consultations, 3000), summary: safeText(session.summary, 3000) })),
+    previousPlans: previousPlans.slice(0, 3).map(plan => normalizedRehabPlan(plan)),
+    trends: patientTrend(jobs),
+  };
+}
+
+async function generateRehabPlan(apiKey, source) {
+  const fields = ['diagnosis','onsetAndCourse','precautions','nutritionAndOral','bodyFunction','activity','participation','riskManagement','patientWishes','familyWishes','shortTermGoals','longTermGoals','dischargeGoal','explanation','ptApproach','otApproach','stApproach','nursingApproach','socialApproach','evidence','aiReviewComments','therapistReviewComments'];
+  const prompt = `あなたは日本の病院のリハビリテーション計画書作成支援AIです。与えられた患者データだけを根拠に、日本語で計画書の下書きを作成してください。
+
+厳守事項:
+- 記録にない診断、病歴、予後、数値、患者・家族の希望を創作しない。
+- 不明な計画項目は空欄にし、確認すべき内容をコメントへ記載する。
+- aiReviewCommentsには、OCRの未確定情報、記録間の矛盾、古い情報、根拠不足を「対象項目: コメント」の形式で記載する。
+- therapistReviewCommentsには、療法士や多職種の臨床判断が必要な事項、目標期限・達成基準・負荷量・禁忌・退院先・本人家族同意などを「対象項目: コメント」の形式で記載する。
+- 短期・長期目標は根拠がある範囲で具体化する。期限や数値を推測しない。
+- evidenceには参照した評価日、評価名、経過記録日、患者ボイス日を簡潔に列挙する。
+- AIは確定せず、下書きだけを返す。
+- 次の全キーを持つJSONオブジェクトだけを返す。各値は文字列。
+${JSON.stringify(Object.fromEntries(fields.map(field => [field, ''])))}
+
+患者データ:
+${JSON.stringify(source)}`;
+  const response = await fetch('https://api.openai.com/v1/responses', {
+    method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model, store: false, reasoning: { effort: reasoningEffort }, input: [{ role: 'user', content: [{ type: 'input_text', text: prompt }] }] }),
+    signal: AbortSignal.timeout(120000),
+  });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload?.error?.message || `OpenAI API error ${response.status}`);
+  const parsed = parsePlainModelJson(extractOutputText(payload));
+  return Object.fromEntries(fields.map(field => [field, safeText(parsed?.[field], field === 'evidence' || field.endsWith('Comments') ? 12000 : 6000)]));
 }
 function numericFieldMap(job) {
   const result = job.confirmedResult || job.result;
@@ -1397,18 +1446,20 @@ const server = http.createServer(async (req, res) => {
       const patientId = safeText(url.searchParams.get('patientId'));
       const patient = db.patients.find(item => item.tenantId === identity.tenantId && item.id === patientId);
       if (!patient) return sendJson(res, 404, { error: '患者が見つかりません' });
-      const jobs = db.jobs.filter(job => job.tenantId === identity.tenantId && job.patientId === patientId && job.result).sort((a, b) => jobClinicalSortKey(b).localeCompare(jobClinicalSortKey(a)));
-      const latestEvaluation = jobs[0] || null;
-      const result = latestEvaluation ? (latestEvaluation.confirmedResult || latestEvaluation.result) : null;
-      const latestRecord = db.rehabRecords.filter(record => record.tenantId === identity.tenantId && record.patientId === patientId).sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0] || null;
-      const latestVoice = db.rehabVoiceSessions.filter(session => session.tenantId === identity.tenantId && session.patientId === patientId).sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0] || null;
-      return sendJson(res, 200, {
-        patient: publicPatient(patient, identity.tenantId),
-        latestRecord: latestRecord ? publicRehabRecord(latestRecord) : null,
-        latestVoice: latestVoice ? { ...latestVoice, hasAudio: Boolean(latestVoice.hasAudio) } : null,
-        latestEvaluation: latestEvaluation ? { id: latestEvaluation.id, documentType: result?.documentType || latestEvaluation.evaluationType || '', evaluationDate: jobEvaluationDate(latestEvaluation), notes: result?.notes || '', fields: (result?.fields || []).slice(0, 120).map(field => ({ label: safeText(field.label, 300), value: safeText(field.value, 1000) })) } : null,
-        trends: patientTrend(jobs),
-      });
+      return sendJson(res, 200, rehabPlanSource(patient, identity.tenantId));
+    }
+    if (req.method === 'POST' && url.pathname === '/api/rehab-plans/generate') {
+      const body = await readJson(req);
+      const patient = db.patients.find(item => item.tenantId === identity.tenantId && item.id === body.patientId);
+      if (!patient) return sendJson(res, 400, { error: '患者を選択してください' });
+      const apiKey = process.env.OPENAI_API_KEY;
+      if (!apiKey) return sendJson(res, 503, { error: 'OPENAI_API_KEYが設定されていません' });
+      try {
+        const plan = await generateRehabPlan(apiKey, rehabPlanSource(patient, identity.tenantId));
+        return sendJson(res, 200, { plan, generatedAt: now(), status: 'AI_DRAFT', saved: false });
+      } catch (error) {
+        return sendJson(res, 502, { error: `AI計画を作成できませんでした: ${safeText(error.message, 500)}` });
+      }
     }
     if (req.method === 'POST' && url.pathname === '/api/rehab-plans') {
       const body = await readJson(req);

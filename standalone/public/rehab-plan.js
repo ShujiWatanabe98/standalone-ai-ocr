@@ -13,6 +13,16 @@ let planPatients = [];
 let selectedPlanPatient = null;
 let patientPlans = [];
 
+const aiPlanButton = planById('rehabPlanLoadSource');
+aiPlanButton.textContent = 'AI計画を作成';
+aiPlanButton.classList.remove('secondary');
+aiPlanButton.classList.add('primary');
+const planActions = planForm.querySelector('.rehab-plan-actions');
+const reviewFieldset = document.createElement('fieldset');
+reviewFieldset.className = 'plan-review-comments';
+reviewFieldset.innerHTML = '<legend>確認コメント</legend><p class="plan-review-help">AIが判断できない箇所と、療法士・多職種の確認が必要な箇所です。確認後に修正し、計画書を確定してください。</p><div class="plan-grid"><label>AI確認コメント<textarea name="aiReviewComments" rows="6" placeholder="データ不足・矛盾・OCR未確定など"></textarea></label><label>療法士確認コメント<textarea name="therapistReviewComments" rows="6" placeholder="臨床判断・目標期限・負荷量・同意確認など"></textarea></label></div>';
+planActions.before(reviewFieldset);
+
 async function planApi(path, options = {}) {
   const response = await fetch(path, { headers: { 'Content-Type': 'application/json', ...(options.headers || {}) }, ...options });
   const result = await response.json().catch(() => ({}));
@@ -47,19 +57,22 @@ function evaluationEvidence(source) {
 async function loadPlanSource({ overwrite = false } = {}) {
   selectedPlanPatient = selectedPatientFromInput();
   if (!selectedPlanPatient) throw new Error('登録患者を選択してください。');
-  const source = await planApi(`/api/rehab-plans/source?patientId=${encodeURIComponent(selectedPlanPatient.id)}`);
-  const evidence = evaluationEvidence(source);
-  planById('rehabPlanEvidence').innerHTML = evidence.length ? `<strong>下書きに使用する根拠</strong><ul>${evidence.map(item => `<li>${planEsc(item)}</li>`).join('')}</ul>` : '<p>参照できる評価・経過・患者ボイスはまだありません。</p>';
-  const evaluationText = (source.latestEvaluation?.fields || []).filter(field => String(field.value || '').trim()).slice(0, 24).map(field => `${field.label}: ${field.value}`).join('\n');
-  setPlanField('evaluationDate', source.latestEvaluation?.evaluationDate || localDate(), { overwrite });
-  setPlanField('bodyFunction', evaluationText, { overwrite });
-  setPlanField('onsetAndCourse', source.latestRecord?.preCondition || '', { overwrite });
-  setPlanField('activity', source.latestRecord?.outcome || '', { overwrite });
-  setPlanField('riskManagement', [source.latestRecord?.riskNotes, source.latestVoice?.concerns].filter(Boolean).join('\n'), { overwrite });
-  setPlanField('patientWishes', [source.latestVoice?.patientLog, source.latestVoice?.concerns, source.latestVoice?.consultations].filter(Boolean).join('\n'), { overwrite });
-  setPlanField('shortTermGoals', source.latestRecord?.nextPlan || '', { overwrite });
-  setPlanField('evidence', evidence.join('\n'), { overwrite: true });
-  planMessage.textContent = '評価OCR・経過記録・患者ボイスから下書きを作成しました。内容を確認して保存してください。';
+  aiPlanButton.disabled = true;
+  aiPlanButton.textContent = 'AIが作成中…';
+  planStatus.textContent = 'AI作成中';
+  planMessage.textContent = '評価OCR・経過記録・患者ボイス・前回計画を確認しています。';
+  try {
+    const generated = await planApi('/api/rehab-plans/generate', { method: 'POST', body: JSON.stringify({ patientId: selectedPlanPatient.id }) });
+    for (const [name, value] of Object.entries(generated.plan || {})) setPlanField(name, value, { overwrite: true });
+    const evidence = String(generated.plan?.evidence || '').split('\n').filter(Boolean);
+    planById('rehabPlanEvidence').innerHTML = evidence.length ? `<strong>AIが参照した根拠</strong><ul>${evidence.map(item => `<li>${planEsc(item)}</li>`).join('')}</ul>` : '<p>AIが明示できる参照根拠はありません。確認コメントを確認してください。</p>';
+    planStatus.textContent = 'AI下書き・未保存';
+    planStatus.className = 'badge plan-status-ai';
+    planMessage.textContent = 'AIが下書きを作成しました。確認コメントを解消し、内容を確認してから保存・確定してください。';
+  } finally {
+    aiPlanButton.disabled = false;
+    aiPlanButton.textContent = 'AI計画を作成';
+  }
   await refreshPlanHistory();
 }
 function populatePlan(plan) {

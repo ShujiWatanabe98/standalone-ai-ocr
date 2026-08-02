@@ -371,6 +371,10 @@ assert.equal(voiceAudioResponse.headers.get('content-type'), 'audio/webm');
 const planSourceResponse = await fetch(`${base}/api/rehab-plans/source?patientId=${patient.id}`, { headers: { Authorization: auth } });
 assert.equal(planSourceResponse.status, 200);
 assert.equal((await planSourceResponse.json()).latestVoice.patientLog, 'テストログ');
+const generatePlanResponse = await fetch(`${base}/api/rehab-plans/generate`, {
+  method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: auth }, body: JSON.stringify({ patientId: patient.id }),
+});
+assert.equal(generatePlanResponse.status, 503);
 const createPlanResponse = await fetch(`${base}/api/rehab-plans`, {
   method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: auth },
   body: JSON.stringify({ patientId: patient.id, planType: 'INITIAL', evaluationDate: '2026-08-02', diagnosis: 'Smoke diagnosis', patientWishes: 'Walk home', shortTermGoals: 'Stand safely', status: 'DRAFT' }),
