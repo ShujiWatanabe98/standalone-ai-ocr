@@ -1459,6 +1459,38 @@ const server = http.createServer(async (req, res) => {
         .map(publicRehabPlan);
       return sendJson(res, 200, plans);
     }
+    if (req.method === 'GET' && url.pathname === '/api/outcome-command-center') {
+      const patients = db.patients.filter(patient => patient.tenantId === identity.tenantId);
+      const patientRows = patients.map(patient => {
+        const plans = db.rehabPlans.filter(plan => plan.tenantId === identity.tenantId && plan.patientId === patient.id).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+        const latestPlan = plans[0] || null;
+        const context = db.rehabPlanContexts.find(item => item.tenantId === identity.tenantId && item.patientId === patient.id) || null;
+        const jobs = db.jobs.filter(job => job.tenantId === identity.tenantId && job.patientId === patient.id && job.result);
+        const fimValues = jobs.flatMap(job => {
+          const result = job.confirmedResult || job.result;
+          return (result?.fields || []).filter(field => /FIM|機能的自立度評価/i.test(`${result?.documentType || ''} ${field.label || ''}`) && String(field.value || '').trim()).map(field => ({ label: safeText(field.label, 200), value: safeText(field.value, 100), date: jobEvaluationDate(job) }));
+        });
+        const reviewComments = [latestPlan?.aiReviewComments, latestPlan?.therapistReviewComments, context?.unresolvedQuestions].filter(value => String(value || '').trim()).length;
+        return {
+          patientId: patient.id, facilityPatientId: patient.facilityPatientId, name: patient.name,
+          planStatus: latestPlan?.status || 'NONE', planUpdatedAt: latestPlan?.updatedAt || null,
+          contextStatus: context?.dataStatus || 'NONE', fimRegistered: fimValues.length > 0,
+          fimLatest: fimValues.sort((a, b) => String(b.date).localeCompare(String(a.date)))[0] || null,
+          reviewComments, dischargeDestination: safeText(context?.dischargeDestination, 500),
+          hasDischargeIssue: Boolean(context && (!context.dischargeDestination || context.unresolvedQuestions || context.risks)),
+        };
+      }).sort((a, b) => (b.reviewComments - a.reviewComments) || a.facilityPatientId.localeCompare(b.facilityPatientId));
+      return sendJson(res, 200, {
+        updatedAt: now(),
+        summary: {
+          patientCount: patientRows.length,
+          fimRegisteredCount: patientRows.filter(row => row.fimRegistered).length,
+          planReviewCount: patientRows.filter(row => row.planStatus !== 'CONFIRMED' || row.reviewComments > 0).length,
+          dischargeIssueCount: patientRows.filter(row => row.hasDischargeIssue).length,
+        },
+        patients: patientRows,
+      });
+    }
     if (req.method === 'GET' && url.pathname === '/api/rehab-plan-context') {
       const patientId = safeText(url.searchParams.get('patientId'));
       const patient = db.patients.find(item => item.tenantId === identity.tenantId && item.id === patientId);
