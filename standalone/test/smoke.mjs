@@ -718,6 +718,16 @@ assert.equal(expansionSummary.expansions.length, 1);
 assert.equal(expansionSummary.expansions[0].wardName, '回復期病棟B');
 assert.equal(expansionSummary.expansions[0].monitoringDays, 28);
 assert.match(expansionSummary.note, /重点監視期間/);
+const expansionId = expansionSummary.expansions[0].id;
+for (const update of [{ action: 'START' }, { action: 'PAUSE', reason: '安全確認のため一時停止' }, { action: 'RESUME' }, { action: 'COMPLETE' }]) {
+  const updateResponse = await fetch(`${base}/api/pilot/expansions/${expansionId}`, { method: 'PUT', headers: { Authorization: auth, 'Content-Type': 'application/json' }, body: JSON.stringify(update) });
+  assert.equal(updateResponse.status, 200);
+}
+expansionSummary = await fetch(`${base}/api/pilot/expansions`, { headers: { Authorization: auth } }).then(response => response.json());
+assert.equal(expansionSummary.expansions[0].status, 'COMPLETED');
+assert.equal(expansionSummary.expansions[0].statusHistory.length, 4);
+assert.equal(expansionSummary.expansions[0].statusHistory[1].reason, '安全確認のため一時停止');
+assert.equal(expansionSummary.expansions[0].monitoringEndDate, '2026-09-28');
 const readinessResponse = await fetch(`${base}/api/pilot/readiness`, { headers: { Authorization: auth } });
 assert.equal(readinessResponse.status, 200);
 const readiness = await readinessResponse.json();
