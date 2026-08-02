@@ -54,6 +54,8 @@ assert.match(rehabSessionApp, /data-rehab-voice-delete/);
 assert.match(rehabSessionApp, /リハビリボイス履歴を削除します/);
 assert.match(rehabPlanApp, /therapistManagementPanel\.insertAdjacentElement\('afterend', rehabPlanSection\)/);
 assert.match(outcomeCommandCenterApp, /querySelector\('#view-rehab-plan'\)/);
+assert.doesNotMatch(outcomeCommandCenterApp, /西大和モデル：/);
+assert.match(outcomeCommandCenterApp, /在宅復帰、FIM改善、実績指数を軸に/);
 const cameraCss = await readFile(new URL('../public/camera-capture.css', import.meta.url), 'utf8');
 const captureCss = await readFile(new URL('../public/capture-layout.css', import.meta.url), 'utf8');
 const patientTimelineCss = await readFile(new URL('../public/patient-timeline.css', import.meta.url), 'utf8');
