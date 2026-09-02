@@ -46,6 +46,7 @@ const secureCookies = process.env.NODE_ENV === 'production';
 const allowedImageTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const databaseUrl = process.env.DATABASE_URL || '';
 const sqlPool = databaseUrl ? new pg.Pool({ connectionString: databaseUrl }) : null;
+let databaseVersionMajor = null;
 
 let db = { version: 24, hospitals: [], patients: [], therapists: [], jobs: [], rehabRecords: [], rehabVoiceSessions: [], rehabPlans: [], rehabPlanContexts: [], outcomeGoals: [], outcomeSnapshots: [], outcomeActions: [], fimAssessments: [], recoveryWardProfiles: [], dischargeTasks: [], conferences: [], warningReviews: [], integrationRuns: [], clinicalEvents: [], pilotTimeMeasurements: [], pilotSafetyEvents: [], pilotStaffFeedback: [], pilotStudies: [], pilotApprovals: [], pilotExpansions: [] };
 let writeChain = Promise.resolve();
@@ -59,6 +60,8 @@ await mkdir(imageDir, { recursive: true });
 await mkdir(rehabVoiceAudioDir, { recursive: true });
 await mkdir(backupDir, { recursive: true });
 if (sqlPool) {
+  const versionResult = await sqlPool.query("SELECT (current_setting('server_version_num')::integer / 10000) AS version");
+  databaseVersionMajor = Number(versionResult.rows[0]?.version) || null;
   await sqlPool.query('CREATE TABLE IF NOT EXISTS aiocr_state (id TEXT PRIMARY KEY, payload BYTEA NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())');
   await sqlPool.query('CREATE TABLE IF NOT EXISTS aiocr_images (name TEXT PRIMARY KEY, payload BYTEA NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())');
   await sqlPool.query('CREATE TABLE IF NOT EXISTS aiocr_rehab_voice_audio (session_id TEXT PRIMARY KEY, mime_type TEXT NOT NULL, payload BYTEA NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())');
@@ -1468,7 +1471,7 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || `${host}:${port}`}`);
   try {
     if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && !sameOrigin(req)) return sendJson(res, 403, { error: '不正な送信元です' });
-    if (req.method === 'GET' && url.pathname === '/api/health') return sendJson(res, 200, { ok: true, product: 'Standalone AI OCR', release: '2026-08-02-patient-list-scroll-1', model, reasoningEffort, retryReasoningEffort, imageDetail, apiKeyConfigured: Boolean(process.env.OPENAI_API_KEY), rehabAiPlanTestData: { facilityPatientIds: rehabAiPlanPatientSeeds.map(([facilityPatientId]) => facilityPatientId), tenantsReady: [...rehabAiPlanTenantIds].filter(tenantId => rehabAiPlanPatientSeeds.every(([facilityPatientId]) => db.patients.some(patient => patient.tenantId === tenantId && patient.facilityPatientId === facilityPatientId))).length }, outcomeDemoData: { facilityPatientIds: outcomeDemoPatientIds, patientsPerTenant: outcomeDemoPatientIds.length, tenantsReady: [...outcomeDemoTenantIds].filter(tenantId => outcomeDemoPatientIds.every(facilityPatientId => db.patients.some(patient => patient.tenantId === tenantId && patient.facilityPatientId === facilityPatientId))).length } });
+    if (req.method === 'GET' && url.pathname === '/api/health') return sendJson(res, 200, { ok: true, product: 'Standalone AI OCR', release: '2026-09-02-storage-health-1', model, reasoningEffort, retryReasoningEffort, imageDetail, apiKeyConfigured: Boolean(process.env.OPENAI_API_KEY), database: { mode: sqlPool ? 'postgres' : 'encrypted-json', durable: Boolean(sqlPool), serverVersionMajor: databaseVersionMajor }, rehabAiPlanTestData: { facilityPatientIds: rehabAiPlanPatientSeeds.map(([facilityPatientId]) => facilityPatientId), tenantsReady: [...rehabAiPlanTenantIds].filter(tenantId => rehabAiPlanPatientSeeds.every(([facilityPatientId]) => db.patients.some(patient => patient.tenantId === tenantId && patient.facilityPatientId === facilityPatientId))).length }, outcomeDemoData: { facilityPatientIds: outcomeDemoPatientIds, patientsPerTenant: outcomeDemoPatientIds.length, tenantsReady: [...outcomeDemoTenantIds].filter(tenantId => outcomeDemoPatientIds.every(facilityPatientId => db.patients.some(patient => patient.tenantId === tenantId && patient.facilityPatientId === facilityPatientId))).length } });
     if (req.method === 'POST' && url.pathname === '/api/auth/login') {
       if ((!authUser || !authPassword) && db.hospitals.length === 0) return sendJson(res, 200, { ok: true, userId: 'local-user', tenantId: facilityId, role: 'ADMIN', redirect: '/admin.html' });
       if (loginRateLimited(req)) return sendJson(res, 429, { error: 'ログイン失敗が多すぎます。15分後に再試行してください' });
